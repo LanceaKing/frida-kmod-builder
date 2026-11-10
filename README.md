@@ -40,6 +40,7 @@ For a vendor kernel, provide its exact source revision and prepared artifacts.
 | `symvers_url` | Public HTTPS URL for `Module.symvers` from the same build. |
 | `kernel_image_url` | Original `Image` or `Image.lz4` URL for rebuilding an expired prepared tree. Set with `symvers_url`; leave `prepare_url` empty. |
 | `kernel_config_sha256` | SHA256 of the decompressed device configuration. Required in image preparation mode. |
+| `system_map_url` | Original `System.map` for Linux 5.10 GKI builds that trim kprobe exports. Requires image preparation and kernel-only mode. |
 | `agent_mode` | `full` or `kernel-only`. The latter supports PID 0 sessions and disables process injection and automatic process hooks. |
 | `kernel_clang_url` | `auto`, `system`, or an HTTPS compiler archive URL. See below. |
 | `rust_toolchain` | Rust version or dated nightly for the agent. Default: `1.99.1`. |
@@ -84,6 +85,9 @@ The [Pixel 7a Android 13 preset](presets/pixel-7a-android13-5.10.json) uses this
 Frida 17.26.2 process thread injection requires interfaces absent from this Linux 5.10 build.
 Use `agent_mode=kernel-only` for this preset and connect with `-p 0`.
 This mode does not install Frida's automatic process hooks. It returns `EOPNOTSUPP` for process thread injection.
+The preset also provides the original `System.map`. The builder derives the offset of `kallsyms_lookup_name` from `_text`; at load time, the exported `kimage_vaddr` supplies the relocated image base.
+This handles trimmed GKI exports without adding invented symbol CRCs or requiring a runtime address parameter.
+The glue functions that call unexported targets use local `__nocfi` annotations because legacy CFI may omit jump-table entries for those targets. The kernel CFI, LTO, and MODVERSIONS configuration remains enabled.
 
 ## Output and installation
 

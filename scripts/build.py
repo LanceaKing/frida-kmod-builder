@@ -31,6 +31,7 @@ DEFAULTS = {
     "symvers_url": "",
     "kernel_image_url": "",
     "kernel_config_sha256": "",
+    "system_map_url": "",
     "agent_mode": "full",
     "kernel_clang_url": "auto",
     "rust_toolchain": "1.99.1",
@@ -81,7 +82,7 @@ def configuration(values):
     require(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_./+-]*", c["kernel_ref"]), "Set kernel_ref when uname -r does not contain a Git commit.")
     require(re.fullmatch(r"[A-Za-z0-9_-]+", c["android_ci_target"]), "Invalid Android CI target.")
     require(not c["android_ci_build"] or c["android_ci_build"].isdigit(), "Android CI build must contain digits only.")
-    for key in ("prepare_url", "symvers_url", "kernel_image_url"):
+    for key in ("prepare_url", "symvers_url", "kernel_image_url", "system_map_url"):
         if c[key]:
             https_url(c[key])
     if c["kernel_image_url"]:
@@ -99,6 +100,9 @@ def configuration(values):
         c["symvers_url"] = base + f"/{c['android_ci_target']}_Module.symvers"
     if c["kernel_clang_url"] not in ("auto", "system"):
         https_url(c["kernel_clang_url"])
+    if c["system_map_url"]:
+        require(c["kernel_image_url"] and c["agent_mode"] == "kernel-only" and family[1] == "5.10",
+                "System.map bootstrap requires image preparation, Linux 5.10, and kernel-only mode.")
     c["artifact_name"] = f"{c['module_name']}-{c['frida_version']}-{c['kernel_release']}-{c['agent_mode']}"
     return c
 
@@ -198,6 +202,19 @@ def verify_config_unchanged(before, after):
     require(not changes, f"Kernel preparation changed configuration options: {changes}")
 
 
+def kallsyms_offset(map_text, symvers_text):
+    symbols = {name: int(address, 16) for address, _, name in
+               (line.split() for line in map_text.splitlines() if line.strip())}
+    require("kimage_vaddr" in {line.split()[1] for line in symvers_text.splitlines() if line.strip()},
+            "The target must export kimage_vaddr for System.map bootstrap.")
+    for name in ("_text", "kallsyms_lookup_name", "kallsyms_on_each_symbol", "__kfifo_from_user",
+                 "sprint_symbol_no_offset", "register_module_notifier", "unregister_module_notifier"):
+        require(name in symbols, f"System.map lacks required symbol {name}.")
+    offset = symbols["kallsyms_lookup_name"] - symbols["_text"]
+    require(0 < offset < 128 * 1024 * 1024 and offset % 4 == 0, "Invalid kallsyms offset in System.map.")
+    return offset
+
+
 def prepare_compiler(c, options):
     clang_url = c["kernel_clang_url"]
     if clang_url == "auto":
@@ -292,6 +309,12 @@ def prepare():
         preparation = {"method": "prepared-artifact"}
     options = inspect_kernel(prepared, c["kernel_release"])
     write_json(WORK / "kernel-options.json", options)
+    bootstrap = None
+    if c["system_map_url"]:
+        download(c["system_map_url"], WORK / "System.map")
+        offset = kallsyms_offset((WORK / "System.map").read_text(), (prepared / "Module.symvers").read_text())
+        bootstrap = {"method": "kimage_vaddr-relative", "kallsyms_lookup_name_offset": offset,
+                     "system_map_sha256": sha256(WORK / "System.map")}
 
     # The prepared Makefile can refer to the original CI workspace.
     # Passing KDIR and KOUT to upstream kbuild rewrites this stub for this runner.
@@ -318,6 +341,7 @@ def prepare():
         "kernel_commit": kernel_commit, "frida_commit": frida_commit,
         "frida_patches": patches,
         "kernel_preparation": preparation,
+        "symbol_bootstrap": bootstrap,
         "releng_commit": run("git", "rev-parse", "HEAD", cwd=WORK / "frida-core/releng", capture=True).strip(),
         "kernel_clang_url": clang_url, "kernel_clang_bin": str(clang_bin),
         "kernel_config_sha256": sha256(prepared / ".config"),
@@ -341,7 +365,11 @@ def build():
     if c["kernel_image_url"]:
         extra_args += [f"KERNELRELEASE={c['kernel_release']}", "LLVM_IAS=1", "CROSS_COMPILE=aarch64-linux-gnu-"]
     if c["agent_mode"] == "kernel-only":
-        extra_args += ["EXTRA_CFLAGS=-DFRIDA_KERNEL_ONLY"]
+        definitions = ["-DFRIDA_KERNEL_ONLY"]
+        if sources.get("symbol_bootstrap"):
+            offset = sources["symbol_bootstrap"]["kallsyms_lookup_name_offset"]
+            definitions += ["-DFRIDA_GKI_TRIMMED_EXPORTS", f"-DFRIDA_KALLSYMS_LOOKUP_OFFSET={offset}UL"]
+        extra_args += ["EXTRA_CFLAGS=" + " ".join(definitions)]
     run("make", "-C", WORK / "frida-core/src/barebone/agent/linux",
         f"-j{min(os.cpu_count() or 2, 8)}", "ARCH=arm64", "BITS=64",
         f"MODULE_NAME={c['module_name']}", f"FRIDA_SDK={WORK / 'sdk'}",

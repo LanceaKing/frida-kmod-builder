@@ -114,6 +114,25 @@ class KernelTests(unittest.TestCase):
             builder.inspect_kernel(self.path, builder.DEFAULT_RELEASE)
 
 
+class SymbolBootstrapTests(unittest.TestCase):
+    def setUp(self):
+        names = ["_text", "kallsyms_lookup_name", "kallsyms_on_each_symbol", "__kfifo_from_user",
+                 "sprint_symbol_no_offset", "register_module_notifier", "unregister_module_notifier"]
+        self.map = "\n".join(f"{0xffffffc008000000 + i * 0x1000:016x} T {name}" for i, name in enumerate(names))
+        self.symvers = "0xb2ead97c\tkimage_vaddr\tvmlinux\tEXPORT_SYMBOL\n"
+
+    def test_requires_exported_runtime_image_base(self):
+        self.assertEqual(builder.kallsyms_offset(self.map, self.symvers), 0x1000)
+        with self.assertRaisesRegex(ValueError, "export kimage_vaddr"):
+            builder.kallsyms_offset(self.map, "")
+
+    def test_rejects_missing_symbol_and_impossible_offset(self):
+        with self.assertRaisesRegex(ValueError, "lacks required symbol"):
+            builder.kallsyms_offset(self.map.replace("kallsyms_lookup_name", "unrelated"), self.symvers)
+        with self.assertRaisesRegex(ValueError, "Invalid kallsyms offset"):
+            builder.kallsyms_offset(self.map.replace("ffffffc008001000", "ffffffc008001001"), self.symvers)
+
+
 class SourceTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

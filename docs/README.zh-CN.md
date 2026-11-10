@@ -43,6 +43,9 @@ Frida agent 部分独立使用 LLVM 19，以满足 soft-float 构建要求。
 该版本的官方镜像配置与实测设备配置一致。
 Linux 5.10 缺少新版 Frida 的进程线程注入接口，因此该预设选择 `agent_mode=kernel-only`。
 连接时使用 `-p 0`。进程线程注入返回 `EOPNOTSUPP`，自动进程 hook 关闭。
+该预设还提供同次构建的 `system_map_url`。构建器从原始 `System.map` 计算符号查询函数相对 `_text` 的偏移，模块通过已导出的 `kimage_vaddr` 获取运行时基址。
+这解决了 GKI 未导出 kprobe 等函数的问题，不需要手工填写运行时地址，也不会伪造符号 CRC。
+调用未导出函数的局部适配函数使用 `__nocfi`，因为旧版 CFI 可能未为这些目标生成跳转表项；内核的 CFI、LTO 和 MODVERSIONS 配置保持启用。
 
 ## 调整其他参数
 
