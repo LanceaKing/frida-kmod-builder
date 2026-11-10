@@ -49,11 +49,15 @@ python -m pip install 'frida==17.26.2' 'https://github.com/LanceaKing/frida-kmod
 frida --version
 ```
 
+For a direct module download, select the full or kernel-only `.ko` asset and copy it as `frida-agent.ko`.
+Check the original asset hashes before renaming. Decompress the server archive and name its output `frida-server`.
+Then follow [the installation guide](INSTALL.md). Actions module bundles already use these filenames.
+
 The wheel version distinguishes this dependency bundle from the official tools package.
 Keep the environment pinned. A normal tools upgrade can replace its bundled bridge.
 Script projects that compile their own bridge must use the [pinned npm dependency](JAVA-TEARDOWN.md#install-the-fork-bridge).
 
-## Migration validation
+## Previous fork migration validation
 
 Git tree comparison confirmed all three core profiles reproduce the old patch chains exactly. The initial fresh npm install reproduced the three previously tested Java bridge files. Migration then exposed an additional ART inline-patch restoration race; the follow-up commit is documented in [the teardown report](JAVA-TEARDOWN.md#inline-art-patch-restoration-race). The tools bridge bundle and wheel built successfully, and all 33 builder tests passed, including rejection of moving source refs and archive or binary checksum mismatches.
 
@@ -66,3 +70,22 @@ The initial concurrent race probe rejected a listener belonging to another activ
 The final fork full module, server, and pinned bridge passed 50 concurrent hook unloads with Java stack walking and 10 Settings spawns. Another 20 Settings spawns passed with the same final bridge before the module switch. Both module binaries match the final CI outputs. The boot ID and SELinux policy hash stayed unchanged; enforcement remained enabled. No new tombstone or kernel fault appeared after the inline-restoration fix.
 
 Raw local test records are retained under `.work/forks/final/`. The earlier preview failed the inline-restoration test. Current installs use the builder release linked above.
+
+## Two-fork consolidation acceptance
+
+The consolidated build uses the same core and Java bridge commits as the previous acceptance.
+The tools wheel comes from official source with only the two bridge dependency files replaced.
+All CLI program files and Java bridge bytes match the previously tested wheel. Only package metadata and nested ZIP timestamps differ.
+The independent [tools CI build](https://github.com/LanceaKing/frida-kmod-builder/actions/runs/42858274353) produced matching bridge and dependency-file hashes.
+All 36 local tests passed.
+
+The rebuilt server has SHA256 `b6674025881fe799baadd3a6ab4c89091bc6d52a86e43e698c4fb625726200ee`.
+The [full build](https://github.com/LanceaKing/frida-kmod-builder/actions/runs/42859031582) and [kernel-only build](https://github.com/LanceaKing/frida-kmod-builder/actions/runs/42859039209) passed with the new source lock and release URLs.
+Both modules match the published and device-tested bytes. Their build records are included in the release.
+All release assets were downloaded again and checked against `SHA256SUMS`.
+
+The new server and tools bundle passed 50 concurrent unloads with Java stack walking, 20 Settings spawns, and 34 sessions across three Apps.
+They also passed 20 target-exit races with recovery after each, invalid/exited PID checks, process-termination notifications, and a standard CLI Java hook.
+Both module modes passed normal unload/load and PID 0 sessions with the new server.
+No new tombstone, kernel fault, reboot, or SELinux policy change occurred. Enforcement stayed enabled and trace logging was restored.
+Raw local records are under `.work/two-forks/device/`.
