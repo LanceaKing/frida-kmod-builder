@@ -61,3 +61,9 @@ It exposes the official prctl service only after initialization succeeds. Shutdo
 `trace_process_ops=1` logs operation names, target PID, result and created TID. It is off by default and does not log memory contents.
 The ordinary Android server uses this service for App injection. The Barebone protocol remains unchanged.
 Runtime acceptance is tracked separately from compiled features in `build-info.json`.
+
+`17.26.2/server/0001-android-bionic-tls-capacity.patch` applies only to a separate Android server build.
+It increases the synthetic TLS block to 64 KiB, so the existing layout reserves 16 KiB for Bionic state.
+The target libc accesses offset `0x2fa1` in that area, beyond the original 2 KiB capacity.
+The kernel-module builder does not select this server patch.
+See the [server build and validation record](../docs/SERVER-ANDROID13-TLS.md) for the remaining SELinux file-access blocker.

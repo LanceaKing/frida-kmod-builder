@@ -81,10 +81,11 @@ For upstream details, read the [Frida Linux module guide](https://github.com/fri
 
 The Pixel 7a full preset is experimental. Check [its acceptance record](PIXEL-5.10-FULL.md) first.
 Revision `0bae5f8` passes a minimal kernel session and normal reload on the pinned device.
-App attach still crashes with the unchanged Frida 17.26.2 server because its synthetic Bionic TLS area is too small.
+The unchanged Frida 17.26.2 server crashes during App attach because its synthetic Bionic TLS area is too small.
+The [rebuilt Android server](SERVER-ANDROID13-TLS.md) corrects that capacity error, but App injection still stops at a SELinux agent-file denial.
 Do not treat the App commands below as a passed installation procedure for this target.
 Barebone remains on port 27042 for `-p 0`. App injection uses a second, ordinary Android server on port 27043.
-Both use the unmodified official Android arm64 server for Frida 17.26.2.
+Both use the Android arm64 server for Frida 17.26.2. The latest validation uses the documented TLS rebuild.
 
 The Android server normally patches SELinux policy at startup, including in Barebone mode.
 For a test that must preserve the current policy, compile `tests/device/server-no-policy.c` with an Android arm64 NDK compiler and push the resulting executable to `/data/local/tmp/`.

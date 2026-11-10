@@ -3,10 +3,11 @@
 Status: **experimental; device acceptance is incomplete**. Do not label this preset as fully supported.
 
 Revision `0bae5f8` passes the process probe, normal module reload, and a minimal kernel JavaScript session on the target device.
-Calculator injection fails in the unchanged Android server's synthetic Bionic TLS layout. Native hooks, Java hooks, and App spawn remain unaccepted.
+The rebuilt server fixes the observed synthetic Bionic TLS capacity error.
+Calculator injection now stops at a SELinux denial for the agent memfd. Native hooks, Java hooks, and App spawn remain unaccepted.
 
 The scope is arm64 Apps, Frida 17.26.2, and kernel `5.10.157-android13-4-00003-g776d0a76f6aa-ab10208116` from source `776d0a76f6aa7c5a92c60afbe886a8e786953199`.
-The backport keeps the official prctl ABI and the official Android server binary.
+The backport keeps the official prctl ABI. The latest device test uses a server with the scoped Android TLS patch.
 Barebone port 27042 serves kernel sessions. Android port 27043 serves App sessions through `KernelInjectSession`.
 
 ## Build and first device attempt
@@ -94,9 +95,25 @@ The faulting code uses `bionic_systrace_disabled`, a field in Android 13's `bion
 The device binary provides the decisive offset evidence. The matching source layout is supporting evidence.
 The probe's successful syscall-only thread does not establish a valid Bionic pthread environment.
 
-The current scope requires the official server binary to remain unchanged.
-Fixing the server's TLS layout requires a scope change. No server modification or further App injection attempt formed part of this validation.
-The Android App server was stopped. The Barebone server remained available on port 27042.
+This failure occurred with the unchanged official server. The next test used the rebuilt server described below.
+
+## Rebuilt server: TLS corrected, policy blocker remains
+
+The [Android server patch](SERVER-ANDROID13-TLS.md) increases the total synthetic TLS allocation to 64 KiB.
+The existing quarter-block layout then reserves 16 KiB for Bionic state.
+The server SHA256 is `e43099154b1532f689fa6929089a506ac5366ef7289f4cb250d7bbc9f33453c6`.
+The device reported the same hash and version 17.26.2.
+
+The Calculator test reached module allocation, writes, and thread creation with App UID 10187.
+The earlier TLS crash did not recur, and Calculator remained alive.
+The next operation failed when SELinux rejected `read write` access to the agent memfd, which retained file type `tmpfs`.
+The host reported `TransportError: error sending data: Broken pipe` before agent startup or script execution.
+This is a separate blocker from TLS capacity. The existing mapper path also transfers this file descriptor.
+
+The rebuilt server passed the minimal kernel JavaScript test on port 27042.
+No additional kernel warning, Oops, panic, or device reboot occurred. Root, global Enforcing state, and the policy hash stayed unchanged.
+The App test server stopped normally. The disposable Calculator process was terminated to release the failed injection's mappings.
+The rebuilt Barebone server remained running. No SELinux policy or file-label changes formed part of this test.
 
 | Acceptance stage | Result |
 | --- | --- |
@@ -106,13 +123,14 @@ The Android App server was stopped. The Barebone server remained available on po
 | First full startup | Failed before service readiness; artifact rejected |
 | Current full startup and normal reload | Three loads and two unloads passed |
 | Alloc/read/write/free and user-thread probe | Passed |
-| Calculator Native and Java hooks | Blocked by userspace TLS crash before agent connection |
+| Rebuilt server TLS capacity | Built and verified; original crash did not recur |
+| Calculator Native and Java hooks | Blocked by SELinux agent-memfd denial before script execution |
 | Spawn and cancellation | Not run after attach failed |
 | Ten attach/unload/detach cycles | Not run |
 | Invalid PID and target exit before spawn | Passed; concurrent exit race remains untested |
 | Kernel server restart and reconnect | Passed |
 | Kernel injection trace plus agent connection | Operations and target thread observed; agent connection failed |
-| Minimal kernel JS session | Passed twice, including after reload |
+| Minimal kernel JS session | Passed before/after reload and with the rebuilt server |
 
 `features` in build-info describes compiled code. `device_validation` records actual observations. A successful build must not set device acceptance to passed.
 
