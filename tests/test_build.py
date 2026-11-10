@@ -90,11 +90,31 @@ class ConfigurationTests(unittest.TestCase):
     def test_custom_kernel_accepts_explicit_sources(self):
         result = builder.configuration({
             "kernel_release": "5.10.157-vendor", "kernel_family": "custom",
+            "agent_mode": "kernel-only",
             "kernel_ref": "vendor-tag", "prepare_url": "https://example.com/prepared.tar.gz",
             "symvers_url": "https://example.com/Module.symvers", "kernel_clang_url": "system",
         })
         self.assertEqual(result["android_ci_build"], "")
         self.assertEqual(result["kernel_ref"], "vendor-tag")
+
+    def test_pixel_modes_share_bootstrap_but_not_process_patch(self):
+        configs = [builder.configuration(builder.read_json(builder.ROOT / "presets" / name))
+                   for name in ("pixel-7a-android13-5.10.json", "pixel-7a-android13-5.10-full.json")]
+        paths = [builder.select_patches(c) for c in configs]
+        common = builder.ROOT / "patches/17.26.2/0003-gki-trimmed-exports.patch"
+        for selected in paths:
+            self.assertIn(common, selected)
+        self.assertTrue(any(p.parent.name == "kernel-only" for p in paths[0]))
+        self.assertFalse(any(p.parent.name == "full-5.10" for p in paths[0]))
+        self.assertTrue(any(p.parent.name == "full-5.10" for p in paths[1]))
+        self.assertFalse(any(p.parent.name == "kernel-only" for p in paths[1]))
+
+    def test_full_510_rejects_unreviewed_targets(self):
+        preset = builder.read_json(builder.ROOT / "presets/pixel-7a-android13-5.10-full.json")
+        for change in ({"kernel_release": "5.10.157-android13-4-g1234567-ab999"},
+                       {"kernel_ref": "main"}, {"frida_version": "17.26.3"}):
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, "limited"):
+                builder.configuration({**preset, **change})
 
     def test_rejects_wrong_family(self):
         with self.assertRaisesRegex(ValueError, "family"):

@@ -1,0 +1,958 @@
+diff --git a/src/barebone/agent/linux/Makefile b/src/barebone/agent/linux/Makefile
+index 279faa0..5eeb646 100644
+--- a/src/barebone/agent/linux/Makefile
++++ b/src/barebone/agent/linux/Makefile
+@@ -142,7 +142,7 @@ LIBC := $(AGENT_TARGET_DIR)/libc-trimmed.a
+ ENTRY_POINTS := frida_agent_start frida_agent_stop \
+ 	gum_interceptor_obtain gum_interceptor_begin_transaction \
+ 	gum_interceptor_end_transaction gum_interceptor_replace \
+-	gum_interceptor_revert
++	gum_interceptor_revert gum_interceptor_flush
+ KEEP_GLOBAL := $(foreach s,$(ENTRY_POINTS),--keep-global-symbol=$(s))
+ 
+ # Two structures the reparenting path reaches into lost a member upstream, and
+diff --git a/src/barebone/agent/linux/frida-kmod.c b/src/barebone/agent/linux/frida-kmod.c
+index 8e3a754..300bb1c 100644
+--- a/src/barebone/agent/linux/frida-kmod.c
++++ b/src/barebone/agent/linux/frida-kmod.c
+@@ -8,7 +8,16 @@
+  * target kernel's own headers is what keeps that knowledge correct.
+  */
+ 
++#include <linux/cgroup.h>
++#include <linux/cred.h>
+ #include <linux/delay.h>
++#include <linux/pid_namespace.h>
++#include <linux/seccomp.h>
++#include <asm/mte.h>
++#include <asm/pointer_auth.h>
++
++/* This backport is selected only for the pinned Pixel 7a Android 13 build. */
++
+ #include <linux/err.h>
+ #include <linux/fdtable.h>
+ #include <linux/fs_struct.h>
+@@ -33,6 +42,12 @@
+ #include <linux/timekeeping.h>
+ #include <linux/uaccess.h>
+ #include <linux/version.h>
++#if !defined(CONFIG_ARM64) || LINUX_VERSION_CODE != KERNEL_VERSION(5, 10, 157)
++# error This compatibility patch requires arm64 Linux 5.10.157
++#endif
++#ifdef CONFIG_SCHED_AUTOGROUP
++# error This backport was not reviewed with CONFIG_SCHED_AUTOGROUP
++#endif
+ #include <linux/completion.h>
+ #include <linux/vmalloc.h>
+ #include <linux/wait.h>
+@@ -131,8 +146,7 @@ typedef unsigned long (* FridaVmMmapFunc) (struct file * file, unsigned long add
+     unsigned long prot, unsigned long flag, unsigned long offset);
+ typedef int (* FridaVmMunmapFunc) (unsigned long start, size_t len);
+ typedef pid_t (* FridaUserModeThreadFunc) (int (* fn) (void *), void * arg, unsigned long flags);
+-typedef void (* FridaDetachPidFunc) (struct pid ** pids, struct task_struct * task, enum pid_type type);
+-typedef void (* FridaFreePidsFunc) (struct pid ** pids);
++typedef void (* FridaDetachPidFunc) (struct task_struct * task, enum pid_type type);
+ typedef void (* FridaTaskJoinGroupStopFunc) (struct task_struct * task);
+ typedef void (* FridaCleanupSighandFunc) (struct sighand_struct * sighand);
+ typedef void (* FridaKmemCacheFreeFunc) (struct kmem_cache * cache, void * object);
+@@ -199,6 +213,8 @@ struct frida_spawn_ctx
+   u64 arg;
+   u64 tls;
+   struct task_struct * leader;
++  struct completion done;
++  int result;
+ };
+ 
+ struct frida_sem_undo_list
+@@ -297,6 +313,7 @@ extern void gum_interceptor_begin_transaction (GumInterceptor * self);
+ extern void gum_interceptor_end_transaction (GumInterceptor * self);
+ extern int gum_interceptor_replace (GumInterceptor * self, void * function_address,
+     void * replacement_function, void * original_function, const void * options);
++extern int gum_interceptor_flush (GumInterceptor * self);
+ extern void gum_interceptor_revert (GumInterceptor * self, void * function_address);
+ 
+ int frida_agent_start (void);
+@@ -310,22 +327,21 @@ unsigned int frida_kmod_wait_prepare (void);
+ void frida_kmod_wait_commit (unsigned int seq, s64 timeout_us);
+ void frida_kmod_wake (void);
+ void frida_kmod_yield (void);
+-void frida_kmod_install_hooks (void);
++int frida_kmod_install_hooks (void);
+ 
+ static void frida_resolve_kallsyms (void);
+ static void frida_resolve_kernel_range (void);
+-static void frida_resolve_process_ops (void);
++static int frida_resolve_process_ops (void);
+ static void frida_resolve_code_allocator (void);
+ static struct mm_struct * frida_grab_process_mm (int pid);
+ static struct task_struct * frida_grab_process_leader (int pid);
+ static int frida_spawn_trampoline (void * data);
+-static void frida_reparent_into_group (struct task_struct * leader);
+-static void frida_adopt_target_context (struct task_struct * leader);
++static int frida_reparent_into_group (struct task_struct * leader);
+ static void frida_remove_cloak_hooks (void);
+ static int frida_show_map (struct seq_file * m, void * v);
+ static int frida_show_smap (struct seq_file * m, void * v);
+ static bool frida_proc_fill_cache (struct file * file, struct dir_context * ctx,
+-    const char * name, unsigned int len, void * instantiate, struct task_struct * task,
++    const char * name, unsigned int len, int (* instantiate) (struct dentry *, struct task_struct *, const void *), struct task_struct * task,
+     const void * ptr);
+ static long frida_sys_prctl (const struct pt_regs * regs);
+ static int frida_proc_pid_status (struct seq_file * m, struct pid_namespace * ns,
+@@ -418,7 +434,15 @@ static FridaVmMmapFunc frida_vm_mmap_impl;
+ static FridaVmMunmapFunc frida_vm_munmap_impl;
+ static FridaUserModeThreadFunc frida_user_mode_thread_impl;
+ static FridaDetachPidFunc frida_detach_pid_impl;
+-static FridaFreePidsFunc frida_free_pids_impl;
++static typeof (&get_task_cred) frida_get_task_cred_impl;
++static typeof (&cgroup_attach_task_all) frida_cgroup_attach_task_all_impl;
++static typeof (&get_seccomp_filter) frida_get_seccomp_filter_impl;
++static typeof (&update_sctlr_el1) frida_update_sctlr_el1_impl;
++static typeof (&mte_thread_switch) frida_mte_thread_switch_impl;
++static typeof (&do_exit) frida_do_exit_impl;
++static typeof (&recalc_sigpending) frida_recalc_sigpending_impl;
++static void (* frida_free_signal_struct_impl) (struct signal_struct * sig);
++static unsigned long __percpu * frida_process_counts;
+ static FridaTaskJoinGroupStopFunc frida_task_join_group_stop_impl;
+ static FridaCleanupSighandFunc frida_cleanup_sighand_impl;
+ static FridaKmemCacheFreeFunc frida_kmem_cache_free_impl;
+@@ -432,6 +456,10 @@ static FridaExecmemFreeFunc frida_execmem_free_impl;
+ static struct kmem_cache ** frida_signal_cachep;
+ static rwlock_t * frida_tasklist_lock;
+ 
++static bool trace_process_ops;
++module_param (trace_process_ops, bool, 0600);
++MODULE_PARM_DESC (trace_process_ops, "Log process operation, PID, result and created TID; no memory contents");
++static bool frida_process_ready;
+ static struct task_struct * frida_op_worker;
+ static DECLARE_WAIT_QUEUE_HEAD (frida_op_wq);
+ static struct frida_kthread_call * frida_op_pending;
+@@ -454,7 +482,7 @@ static void * frida_proc_fdinfo_instantiate_addr;
+ static int (* frida_show_map_orig) (struct seq_file * m, void * v);
+ static int (* frida_show_smap_orig) (struct seq_file * m, void * v);
+ static bool (* frida_proc_fill_cache_orig) (struct file * file, struct dir_context * ctx,
+-    const char * name, unsigned int len, void * instantiate, struct task_struct * task,
++    const char * name, unsigned int len, int (* instantiate) (struct dentry *, struct task_struct *, const void *), struct task_struct * task,
+     const void * ptr);
+ static long (* frida_sys_prctl_orig) (const struct pt_regs * regs);
+ static int (* frida_proc_pid_status_orig) (struct seq_file * m, struct pid_namespace * ns,
+@@ -502,7 +530,8 @@ frida_kmod_init (void)
+     return -ENOENT;
+ #endif
+   frida_resolve_kernel_range ();
+-  frida_resolve_process_ops ();
++  if (frida_resolve_process_ops () != 0)
++    return -ENOENT;
+   frida_resolve_code_allocator ();
+ 
+   return frida_agent_start ();
+@@ -573,7 +602,7 @@ frida_resolve_kernel_range (void)
+   frida_kernel_size = end - start;
+ }
+ 
+-static void
++static int
+ frida_resolve_process_ops (void)
+ {
+   frida_find_task_by_vpid_impl = (FridaFindTaskByVpidFunc) frida_kmod_find_function ("find_task_by_vpid");
+@@ -583,9 +612,8 @@ frida_resolve_process_ops (void)
+   frida_kthread_unuse_mm_impl = (FridaKthreadUnuseMmFunc) frida_kmod_find_function ("kthread_unuse_mm");
+   frida_vm_mmap_impl = (FridaVmMmapFunc) frida_kmod_find_function ("vm_mmap");
+   frida_vm_munmap_impl = (FridaVmMunmapFunc) frida_kmod_find_function ("vm_munmap");
+-  frida_user_mode_thread_impl = (FridaUserModeThreadFunc) frida_kmod_find_function ("user_mode_thread");
++  frida_user_mode_thread_impl = (FridaUserModeThreadFunc) frida_kmod_find_function ("kernel_thread");
+   frida_detach_pid_impl = (FridaDetachPidFunc) frida_kmod_find_function ("detach_pid");
+-  frida_free_pids_impl = (FridaFreePidsFunc) frida_kmod_find_function ("free_pids");
+   frida_task_join_group_stop_impl = (FridaTaskJoinGroupStopFunc) frida_kmod_find_function ("task_join_group_stop");
+   frida_cleanup_sighand_impl = (FridaCleanupSighandFunc) frida_kmod_find_function ("__cleanup_sighand");
+   frida_kmem_cache_free_impl = (FridaKmemCacheFreeFunc) frida_kmod_find_function ("kmem_cache_free");
+@@ -594,6 +622,46 @@ frida_resolve_process_ops (void)
+   frida_free_fs_struct_impl = (FridaFreeFsStructFunc) frida_kmod_find_function ("free_fs_struct");
+   frida_signal_cachep = (struct kmem_cache **) frida_kmod_find_symbol ("signal_cachep");
+   frida_tasklist_lock = (rwlock_t *) frida_kmod_find_symbol ("tasklist_lock");
++  frida_get_task_cred_impl = (void *) frida_kmod_find_function ("get_task_cred");
++  frida_cgroup_attach_task_all_impl = (void *) frida_kmod_find_function ("cgroup_attach_task_all");
++  frida_get_seccomp_filter_impl = (void *) frida_kmod_find_function ("get_seccomp_filter");
++  frida_update_sctlr_el1_impl = (void *) frida_kmod_find_function ("update_sctlr_el1");
++  frida_mte_thread_switch_impl = (void *) frida_kmod_find_function ("mte_thread_switch");
++  frida_do_exit_impl = (void *) frida_kmod_find_function ("do_exit");
++  frida_recalc_sigpending_impl = (void *) frida_kmod_find_function ("recalc_sigpending");
++  frida_free_signal_struct_impl = (void *) frida_kmod_find_function ("free_signal_struct");
++  frida_process_counts = (void *) frida_kmod_find_symbol ("process_counts");
++
++#define FRIDA_REQUIRE(symbol) \
++  do { if ((symbol) == NULL) { pr_err ("frida: missing required symbol: %s\n", #symbol); return -ENOENT; } } while (0)
++  FRIDA_REQUIRE (frida_find_task_by_vpid_impl);
++  FRIDA_REQUIRE (frida_get_task_mm_impl);
++  FRIDA_REQUIRE (frida_mmput_impl);
++  FRIDA_REQUIRE (frida_kthread_use_mm_impl);
++  FRIDA_REQUIRE (frida_kthread_unuse_mm_impl);
++  FRIDA_REQUIRE (frida_vm_mmap_impl);
++  FRIDA_REQUIRE (frida_vm_munmap_impl);
++  FRIDA_REQUIRE (frida_user_mode_thread_impl);
++  FRIDA_REQUIRE (frida_detach_pid_impl);
++  FRIDA_REQUIRE (frida_task_join_group_stop_impl);
++  FRIDA_REQUIRE (frida_cleanup_sighand_impl);
++  FRIDA_REQUIRE (frida_kmem_cache_free_impl);
++  FRIDA_REQUIRE (frida_put_files_struct_impl);
++  FRIDA_REQUIRE (frida_switch_task_namespaces_impl);
++  FRIDA_REQUIRE (frida_free_fs_struct_impl);
++  FRIDA_REQUIRE (frida_signal_cachep);
++  FRIDA_REQUIRE (frida_tasklist_lock);
++  FRIDA_REQUIRE (frida_get_task_cred_impl);
++  FRIDA_REQUIRE (frida_cgroup_attach_task_all_impl);
++  FRIDA_REQUIRE (frida_get_seccomp_filter_impl);
++  FRIDA_REQUIRE (frida_update_sctlr_el1_impl);
++  FRIDA_REQUIRE (frida_mte_thread_switch_impl);
++  FRIDA_REQUIRE (frida_do_exit_impl);
++  FRIDA_REQUIRE (frida_recalc_sigpending_impl);
++  FRIDA_REQUIRE (frida_free_signal_struct_impl);
++  FRIDA_REQUIRE (frida_process_counts);
++#undef FRIDA_REQUIRE
++  return 0;
+ }
+ 
+ static void
+@@ -699,6 +767,8 @@ frida_kmod_spawn_thread (FridaThreadEntry entry,
+   struct task_struct * task;
+ 
+   ctx = kmalloc (sizeof (struct frida_thread_ctx), GFP_KERNEL);
++  if (ctx == NULL)
++    return -ENOMEM;
+   ctx->entry = entry;
+   ctx->parameter = parameter;
+ 
+@@ -810,42 +880,64 @@ frida_kmod_process_read (int pid,
+   return read;
+ }
+ 
+-int
+-frida_kmod_process_spawn_thread (int pid,
+-                                 u64 entry,
+-                                 u64 stack,
+-                                 u64 arg,
+-                                 u64 tls)
++int FRIDA_RESOLVED_CALL
++frida_kmod_process_spawn_thread (int pid, u64 entry, u64 stack, u64 arg, u64 tls)
+ {
+   int tid;
+   struct mm_struct * mm;
+   struct task_struct * leader;
+   struct frida_spawn_ctx * ctx;
+ 
+-  mm = frida_grab_process_mm (pid);
+-  if (mm == NULL)
+-    return -ESRCH;
+-
++  if (!entry || entry >= TASK_SIZE_64 || !stack || stack >= TASK_SIZE_64 ||
++      (stack & 15) || tls >= TASK_SIZE_64)
++    return -EINVAL;
+   leader = frida_grab_process_leader (pid);
+   if (leader == NULL)
+-  {
+-    frida_mmput_impl (mm);
+     return -ESRCH;
+-  }
+ 
+-  ctx = kmalloc (sizeof (struct frida_spawn_ctx), GFP_KERNEL);
++  /* Hold off exec until the child has adopted the same mm and signal group. */
++  down_read (&leader->signal->exec_update_lock);
++  mm = frida_get_task_mm_impl (leader);
++  if (mm == NULL)
++  {
++    tid = -ESRCH;
++    goto release_leader;
++  }
++  if (is_compat_thread (task_thread_info (leader)))
++  {
++    tid = -EOPNOTSUPP;
++    goto release_mm;
++  }
++  ctx = kzalloc (sizeof (*ctx), GFP_KERNEL);
++  if (ctx == NULL)
++  {
++    tid = -ENOMEM;
++    goto release_mm;
++  }
+   ctx->entry = entry;
+   ctx->stack = stack;
+   ctx->arg = arg;
+   ctx->tls = tls;
+   ctx->leader = leader;
++  init_completion (&ctx->done);
+ 
++  /* 5.10 kernel_thread sets x19/x20 for ret_from_fork. The trampoline must
++   * finish the user-task conversion before returning to ret_to_user. */
+   frida_kthread_use_mm_impl (mm);
+-  tid = frida_user_mode_thread_impl (frida_spawn_trampoline, ctx, 0);
++  tid = frida_user_mode_thread_impl (frida_spawn_trampoline, ctx, SIGCHLD);
+   frida_kthread_unuse_mm_impl (mm);
+-
++  if (tid >= 0)
++  {
++    wait_for_completion (&ctx->done);
++    if (ctx->result != 0)
++      tid = ctx->result;
++  }
++  kfree (ctx);
++release_mm:
+   frida_mmput_impl (mm);
+-
++release_leader:
++  up_read (&leader->signal->exec_update_lock);
++  put_task_struct (leader);
+   return tid;
+ }
+ 
+@@ -1056,7 +1148,7 @@ frida_grab_process_mm (int pid)
+   return mm;
+ }
+ 
+-static struct task_struct *
++static struct task_struct * FRIDA_RESOLVED_CALL
+ frida_grab_process_leader (int pid)
+ {
+   struct task_struct * leader;
+@@ -1072,63 +1164,120 @@ frida_grab_process_leader (int pid)
+   return leader;
+ }
+ 
+-static int
++static int FRIDA_RESOLVED_CALL
+ frida_spawn_trampoline (void * data)
+ {
+-  struct frida_spawn_ctx ctx = *(struct frida_spawn_ctx *) data;
+-  struct pt_regs * regs;
+-
+-  regs = task_pt_regs (current);
+-
+-  kfree (data);
++  struct frida_spawn_ctx * ctx = data;
++  struct pt_regs * regs = task_pt_regs (current);
++  int result;
+ 
+-  frida_reparent_into_group (ctx.leader);
+-  put_task_struct (ctx.leader);
++  /* Raw kernel_thread children have no allocated struct kthread. Do not
++   * reinterpret the worker's kthread state as a user clear_child_tid pointer. */
++  if (current->set_child_tid != NULL || current->seccomp.mode != SECCOMP_MODE_DISABLED)
++    result = -EINVAL;
++  else
++    result = frida_cgroup_attach_task_all_impl (ctx->leader, current);
++  if (result == 0)
++    result = frida_reparent_into_group (ctx->leader);
++  if (result != 0)
++  {
++    ctx->result = result;
++    complete (&ctx->done);
++    /* SIGCHLD is ignored by the kernel worker, so failure is autoreaped. */
++    frida_do_exit_impl (0);
++  }
+ 
+-  memset (regs, 0, sizeof (struct pt_regs));
+-#ifdef CONFIG_X86_64
+-  regs->ip = ctx.entry;
+-  regs->sp = ctx.stack;
+-  regs->di = ctx.arg;
+-  regs->cs = __USER_CS;
+-  regs->ss = __USER_DS;
+-  regs->flags = X86_EFLAGS_IF;
+-  regs->orig_ax = -1;
+-
+-  current->thread.fsbase = ctx.tls;
+-  frida_write_fsbase (ctx.tls);
+-#endif
+-#ifdef CONFIG_ARM64
+-  regs->pc = ctx.entry;
+-  regs->sp = ctx.stack;
+-  regs->regs[0] = ctx.arg;
++  memset (regs, 0, sizeof (*regs));
++  regs->pc = ctx->entry;
++  regs->sp = ctx->stack;
++  regs->regs[0] = ctx->arg;
+   regs->pstate = PSR_MODE_EL0t;
+-
+-  current->thread.uw.tp_value = ctx.tls;
+-  write_sysreg (ctx.tls, tpidr_el0);
+-#endif
+-
++  regs->syscallno = NO_SYSCALL;
++  current->thread.uw.tp_value = ctx->tls;
++  current->thread.uw.tp2_value = 0;
++  write_sysreg (ctx->tls, tpidr_el0);
++  write_sysreg (0, tpidrro_el0);
++  force_uaccess_begin ();
++
++  preempt_disable ();
++  ptrauth_thread_switch_user (current);
++  frida_mte_thread_switch_impl (current);
++  frida_update_sctlr_el1_impl (current->thread.sctlr_user);
++  preempt_enable ();
++  frida_recalc_sigpending_impl ();
++
++  if (trace_process_ops)
++    pr_info ("frida: process op=thread-ready pid=%d tid=%d uid=%u result=0\n",
++        current->tgid, current->pid, __kuid_val (current_uid ()));
++  ctx->result = 0;
++  complete (&ctx->done);
++  /* No access to ctx after completion: the creator owns and frees it. */
+   return 0;
+ }
+ 
+-static void
++static int FRIDA_RESOLVED_CALL
+ frida_reparent_into_group (struct task_struct * leader)
+ {
+   struct task_struct * child = current;
+   struct signal_struct * old_signal = child->signal;
+   struct sighand_struct * old_sighand = child->sighand;
+-  struct pid * freed[PIDTYPE_MAX] = { NULL };
++  struct files_struct * old_files = child->files;
++  struct fs_struct * old_fs = child->fs;
++  const struct cred * old_cred = child->cred;
++  const struct cred * old_real_cred = child->real_cred;
++  const struct cred * cred;
++  struct nsproxy * ns;
++  int fs_dead;
++  int result = -ESRCH;
++#ifdef CONFIG_SYSVIPC
++  void * undo_list;
++#endif
+ 
+   write_lock_irq (frida_tasklist_lock);
+-
+-  frida_detach_pid_impl (freed, child, PIDTYPE_SID);
+-  frida_detach_pid_impl (freed, child, PIDTYPE_PGID);
+-  frida_detach_pid_impl (freed, child, PIDTYPE_TGID);
+-
++  task_lock (leader);
++  if (leader->exit_state || (leader->flags & PF_EXITING) || leader->mm != child->mm ||
++      leader->sighand == NULL || leader->files == NULL || leader->fs == NULL || leader->nsproxy == NULL)
++    goto unlock_task;
++  if (task_active_pid_ns (leader) != task_active_pid_ns (child))
++  {
++    result = -EOPNOTSUPP;
++    goto unlock_task;
++  }
++  spin_lock (&leader->sighand->siglock);
++  if (leader->signal->flags & (SIGNAL_GROUP_EXIT | SIGNAL_GROUP_COREDUMP))
++    goto unlock_signal;
++
++  /* All pins are taken while exit cannot remove these objects. No operation
++   * from this point to unlock can fail. The child's old references are put
++   * outside the tasklist/sighand locks. */
++  cred = frida_get_task_cred_impl (leader);
++  atomic_inc (&leader->files->count);
++  frida_fs_lock (leader->fs);
++  leader->fs->users++;
++  frida_fs_unlock (leader->fs);
++  ns = leader->nsproxy;
++  get_nsproxy (ns);
++  refcount_inc (&leader->sighand->count);
++  frida_get_seccomp_filter_impl (leader);
++
++  task_lock (child);
++  child->files = leader->files;
++  child->fs = leader->fs;
++  /* fork charged this thread to the worker's user. Transfer that charge. */
++  atomic_inc (&cred->user->processes);
++  atomic_dec (&old_real_cred->user->processes);
++  rcu_assign_pointer (child->real_cred, cred);
++  rcu_assign_pointer (child->cred, get_cred (cred));
++  task_unlock (child);
++
++  frida_detach_pid_impl (child, PIDTYPE_SID);
++  frida_detach_pid_impl (child, PIDTYPE_PGID);
++  frida_detach_pid_impl (child, PIDTYPE_TGID);
+   list_del_rcu (&child->tasks);
+   list_del_init (&child->sibling);
+   list_del_rcu (&child->thread_node);
+-
++  /* copy_process counted a process leader; it is now a group member. */
++  this_cpu_dec (*frida_process_counts);
+   child->real_parent = leader->real_parent;
+   child->parent = leader->real_parent;
+   child->group_leader = leader;
+@@ -1136,99 +1285,65 @@ frida_reparent_into_group (struct task_struct * leader)
+   child->exit_signal = -1;
+   child->signal = leader->signal;
+   child->sighand = leader->sighand;
+-
+-  refcount_inc (&leader->sighand->count);
+-
+-  spin_lock (&leader->sighand->siglock);
+-
+-  leader->signal->nr_threads++;
+-  leader->signal->quick_threads++;
+-  atomic_inc (&leader->signal->live);
+-  refcount_inc (&leader->signal->sigcnt);
+-
++  child->blocked = leader->blocked;
++  child->real_blocked = leader->real_blocked;
++#ifdef CONFIG_SYSVIPC
++  undo_list = leader->sysvsem.undo_list;
++  if (undo_list != NULL)
++    refcount_inc (&((struct frida_sem_undo_list *) undo_list)->refcnt);
++  child->sysvsem.undo_list = undo_list;
++#endif
++  child->seccomp = leader->seccomp;
++  if (child->seccomp.mode != SECCOMP_MODE_DISABLED)
++    set_thread_flag (TIF_SECCOMP);
++  if (task_no_new_privs (leader))
++    task_set_no_new_privs (child);
++#ifdef CONFIG_ARM64_PTR_AUTH
++  child->thread.keys_user = leader->thread.keys_user;
++#endif
++#ifdef CONFIG_ARM64_MTE
++  child->thread.mte_ctrl = leader->thread.mte_ctrl;
++  clear_thread_flag (TIF_MTE_ASYNC_FAULT);
++#endif
++  child->thread.sctlr_user = leader->thread.sctlr_user;
++  if (test_tsk_thread_flag (leader, TIF_TAGGED_ADDR))
++    set_thread_flag (TIF_TAGGED_ADDR);
++  child->flags &= ~(PF_KTHREAD | PF_NOFREEZE | PF_NO_SETAFFINITY);
++  child->signal->nr_threads++;
++  atomic_inc (&child->signal->live);
++  refcount_inc (&child->signal->sigcnt);
+   frida_task_join_group_stop_impl (child);
+-
+-#ifdef FRIDA_HAVE_TASK_THREAD_GROUP
+   list_add_tail_rcu (&child->thread_group, &leader->thread_group);
+-#endif
+   list_add_tail_rcu (&child->thread_node, &leader->signal->thread_head);
++  result = 0;
+ 
++unlock_signal:
+   spin_unlock (&leader->sighand->siglock);
+-
++unlock_task:
++  task_unlock (leader);
+   write_unlock_irq (frida_tasklist_lock);
++  if (result != 0)
++    return result;
+ 
+-  frida_free_pids_impl (freed);
+-
+-  frida_cleanup_sighand_impl (old_sighand);
+-  if (refcount_dec_and_test (&old_signal->sigcnt))
+-    frida_kmem_cache_free_impl (*frida_signal_cachep, old_signal);
+-
+-  frida_adopt_target_context (leader);
+-}
+-
+-/*
+- * user_mode_thread hands the new thread the kernel worker's fd table and credentials. The loader
+- * dlopen()s the agent through /proc/<tgid>/fd/<n>, and it must reach the target's fds and pass the
+- * target's SELinux checks (the credentials carry the security context), so adopt them from the
+- * leader — along with its fs, namespaces and SysV semaphore undo list, as a real CLONE_THREAD
+- * sibling would share them.
+- */
+-static void
+-frida_adopt_target_context (struct task_struct * leader)
+-{
+-  struct files_struct * old_files = current->files;
+-  struct files_struct * files = leader->files;
+-  struct fs_struct * old_fs = current->fs;
+-  struct fs_struct * fs = leader->fs;
+-  const struct cred * old_cred = current->cred;
+-  const struct cred * old_real_cred = current->real_cred;
+-#ifdef CONFIG_SYSVIPC
+-  void * undo_list = leader->sysvsem.undo_list;
+-#endif
+-  int fs_dead;
+-
+-  atomic_inc (&files->count);
+-  task_lock (current);
+-  current->files = files;
+-  task_unlock (current);
++  frida_switch_task_namespaces_impl (child, ns);
+   frida_put_files_struct_impl (old_files);
+-
+-  frida_fs_lock (fs);
+-  fs->users++;
+-  frida_fs_unlock (fs);
+-  task_lock (current);
+-  current->fs = fs;
+-  task_unlock (current);
+   frida_fs_lock (old_fs);
+   fs_dead = --old_fs->users == 0;
+   frida_fs_unlock (old_fs);
+   if (fs_dead)
+     frida_free_fs_struct_impl (old_fs);
+-
+-  current->real_cred = get_cred (leader->real_cred);
+-  rcu_assign_pointer (current->cred, get_cred (leader->cred));
+   put_cred (old_cred);
+   put_cred (old_real_cred);
+-
+-  get_nsproxy (leader->nsproxy);
+-  frida_switch_task_namespaces_impl (current, leader->nsproxy);
+-
+-#ifdef CONFIG_SYSVIPC
+-  if (undo_list != NULL)
+-  {
+-    refcount_inc (&((struct frida_sem_undo_list *) undo_list)->refcnt);
+-    current->sysvsem.undo_list = undo_list;
+-  }
+-#endif
++  frida_cleanup_sighand_impl (old_sighand);
++  if (refcount_dec_and_test (&old_signal->sigcnt))
++    frida_free_signal_struct_impl (old_signal);
++  return 0;
+ }
+ 
+-void
++int
+ frida_kmod_install_hooks (void)
+ {
+-  frida_op_worker = kthread_run (frida_op_worker_fn, NULL, "frida-op");
+-
+-  frida_interceptor = gum_interceptor_obtain ();
+-
++  int result;
+   frida_show_map_addr = (void *) frida_kmod_find_symbol ("show_map");
+   frida_show_smap_addr = (void *) frida_kmod_find_symbol ("show_smap");
+   frida_proc_fill_cache_addr = (void *) frida_kmod_find_symbol ("proc_fill_cache");
+@@ -1240,22 +1355,122 @@ frida_kmod_install_hooks (void)
+   frida_proc_fd_instantiate_addr = (void *) frida_kmod_find_symbol ("proc_fd_instantiate");
+   frida_proc_fdinfo_instantiate_addr = (void *) frida_kmod_find_symbol ("proc_fdinfo_instantiate");
+ 
++  if (frida_show_map_addr == NULL)
++  {
++    pr_err ("frida: missing hook symbol: show_map\n");
++    return -ENOENT;
++  }
++  if (frida_show_smap_addr == NULL)
++  {
++    pr_err ("frida: missing hook symbol: show_smap\n");
++    return -ENOENT;
++  }
++  if (frida_proc_fill_cache_addr == NULL)
++  {
++    pr_err ("frida: missing hook symbol: proc_fill_cache\n");
++    return -ENOENT;
++  }
++  if (frida_sys_prctl_addr == NULL)
++  {
++    pr_err ("frida: missing hook symbol: sys_prctl\n");
++    return -ENOENT;
++  }
++  if (frida_proc_pid_status_addr == NULL)
++  {
++    pr_err ("frida: missing hook symbol: proc_pid_status\n");
++    return -ENOENT;
++  }
++  if (frida_do_task_stat_addr == NULL)
++  {
++    pr_err ("frida: missing hook symbol: do_task_stat\n");
++    return -ENOENT;
++  }
++  if (frida_release_task_addr == NULL)
++  {
++    pr_err ("frida: missing hook symbol: release_task\n");
++    return -ENOENT;
++  }
++  if (frida_proc_task_instantiate_addr == NULL)
++  {
++    pr_err ("frida: missing hook symbol: proc_task_instantiate\n");
++    return -ENOENT;
++  }
++  if (frida_proc_fd_instantiate_addr == NULL)
++  {
++    pr_err ("frida: missing hook symbol: proc_fd_instantiate\n");
++    return -ENOENT;
++  }
++  if (frida_proc_fdinfo_instantiate_addr == NULL)
++  {
++    pr_err ("frida: missing hook symbol: proc_fdinfo_instantiate\n");
++    return -ENOENT;
++  }
++  frida_op_worker = kthread_run (frida_op_worker_fn, NULL, "frida-op");
++  if (IS_ERR (frida_op_worker))
++  {
++    result = PTR_ERR (frida_op_worker);
++    frida_op_worker = NULL;
++    return result;
++  }
++  frida_interceptor = gum_interceptor_obtain ();
+   gum_interceptor_begin_transaction (frida_interceptor);
+-  gum_interceptor_replace (frida_interceptor, frida_show_map_addr, frida_show_map,
+-      &frida_show_map_orig, NULL);
+-  gum_interceptor_replace (frida_interceptor, frida_show_smap_addr, frida_show_smap,
+-      &frida_show_smap_orig, NULL);
+-  gum_interceptor_replace (frida_interceptor, frida_proc_fill_cache_addr, frida_proc_fill_cache,
+-      &frida_proc_fill_cache_orig, NULL);
+-  gum_interceptor_replace (frida_interceptor, frida_sys_prctl_addr, frida_sys_prctl,
+-      &frida_sys_prctl_orig, NULL);
+-  gum_interceptor_replace (frida_interceptor, frida_proc_pid_status_addr, frida_proc_pid_status,
+-      &frida_proc_pid_status_orig, NULL);
+-  gum_interceptor_replace (frida_interceptor, frida_do_task_stat_addr, frida_do_task_stat,
+-      &frida_do_task_stat_orig, NULL);
+-  gum_interceptor_replace (frida_interceptor, frida_release_task_addr, frida_release_task,
+-      &frida_release_task_orig, NULL);
++  result = gum_interceptor_replace (frida_interceptor, frida_show_map_addr,
++      frida_show_map, &frida_show_map_orig, NULL);
++  if (result != 0)
++  {
++    pr_err ("frida: hook show_map failed: %d\n", result);
++    goto rollback;
++  }
++  result = gum_interceptor_replace (frida_interceptor, frida_show_smap_addr,
++      frida_show_smap, &frida_show_smap_orig, NULL);
++  if (result != 0)
++  {
++    pr_err ("frida: hook show_smap failed: %d\n", result);
++    goto rollback;
++  }
++  result = gum_interceptor_replace (frida_interceptor, frida_proc_fill_cache_addr,
++      frida_proc_fill_cache, &frida_proc_fill_cache_orig, NULL);
++  if (result != 0)
++  {
++    pr_err ("frida: hook proc_fill_cache failed: %d\n", result);
++    goto rollback;
++  }
++  result = gum_interceptor_replace (frida_interceptor, frida_sys_prctl_addr,
++      frida_sys_prctl, &frida_sys_prctl_orig, NULL);
++  if (result != 0)
++  {
++    pr_err ("frida: hook sys_prctl failed: %d\n", result);
++    goto rollback;
++  }
++  result = gum_interceptor_replace (frida_interceptor, frida_proc_pid_status_addr,
++      frida_proc_pid_status, &frida_proc_pid_status_orig, NULL);
++  if (result != 0)
++  {
++    pr_err ("frida: hook proc_pid_status failed: %d\n", result);
++    goto rollback;
++  }
++  result = gum_interceptor_replace (frida_interceptor, frida_do_task_stat_addr,
++      frida_do_task_stat, &frida_do_task_stat_orig, NULL);
++  if (result != 0)
++  {
++    pr_err ("frida: hook do_task_stat failed: %d\n", result);
++    goto rollback;
++  }
++  result = gum_interceptor_replace (frida_interceptor, frida_release_task_addr,
++      frida_release_task, &frida_release_task_orig, NULL);
++  if (result != 0)
++  {
++    pr_err ("frida: hook release_task failed: %d\n", result);
++    goto rollback;
++  }
++  gum_interceptor_end_transaction (frida_interceptor);
++  WRITE_ONCE (frida_process_ready, true);
++  pr_info ("frida: process service ready (arm64 5.10 backport)\n");
++  return 0;
++rollback:
+   gum_interceptor_end_transaction (frida_interceptor);
++  frida_remove_cloak_hooks ();
++  return -EINVAL;
+ }
+ 
+ static void
+@@ -1263,19 +1478,36 @@ frida_remove_cloak_hooks (void)
+ {
+   struct frida_cloak * c, * next;
+ 
+-  if (frida_op_worker != NULL)
+-    kthread_stop (frida_op_worker);
+-
++  WRITE_ONCE (frida_process_ready, false);
+   if (frida_interceptor != NULL)
+   {
+-    gum_interceptor_revert (frida_interceptor, frida_show_map_addr);
+-    gum_interceptor_revert (frida_interceptor, frida_show_smap_addr);
+-    gum_interceptor_revert (frida_interceptor, frida_proc_fill_cache_addr);
+-    gum_interceptor_revert (frida_interceptor, frida_sys_prctl_addr);
+-    gum_interceptor_revert (frida_interceptor, frida_proc_pid_status_addr);
+-    gum_interceptor_revert (frida_interceptor, frida_do_task_stat_addr);
+-    gum_interceptor_revert (frida_interceptor, frida_release_task_addr);
++    gum_interceptor_begin_transaction (frida_interceptor);
++    if (frida_show_map_orig != NULL)
++      gum_interceptor_revert (frida_interceptor, frida_show_map_addr);
++    if (frida_show_smap_orig != NULL)
++      gum_interceptor_revert (frida_interceptor, frida_show_smap_addr);
++    if (frida_proc_fill_cache_orig != NULL)
++      gum_interceptor_revert (frida_interceptor, frida_proc_fill_cache_addr);
++    if (frida_sys_prctl_orig != NULL)
++      gum_interceptor_revert (frida_interceptor, frida_sys_prctl_addr);
++    if (frida_proc_pid_status_orig != NULL)
++      gum_interceptor_revert (frida_interceptor, frida_proc_pid_status_addr);
++    if (frida_do_task_stat_orig != NULL)
++      gum_interceptor_revert (frida_interceptor, frida_do_task_stat_addr);
++    if (frida_release_task_orig != NULL)
++      gum_interceptor_revert (frida_interceptor, frida_release_task_addr);
++    gum_interceptor_end_transaction (frida_interceptor);
++    /* Gum keeps active replacement frames alive until their callers return. */
++    while (!gum_interceptor_flush (frida_interceptor))
++      msleep (1);
+   }
++  mutex_lock (&frida_op_mutex);
++  if (frida_op_worker != NULL)
++  {
++    kthread_stop (frida_op_worker);
++    frida_op_worker = NULL;
++  }
++  mutex_unlock (&frida_op_mutex);
+ 
+   spin_lock (&frida_cloaks_lock);
+   list_for_each_entry_safe (c, next, &frida_cloaks, node)
+@@ -1318,7 +1550,7 @@ frida_proc_fill_cache (struct file * file,
+                        struct dir_context * ctx,
+                        const char * name,
+                        unsigned int len,
+-                       void * instantiate,
++                       int (* instantiate) (struct dentry *, struct task_struct *, const void *),
+                        struct task_struct * task,
+                        const void * ptr)
+ {
+@@ -1359,6 +1591,8 @@ frida_sys_prctl (const struct pt_regs * regs)
+   tgid = current->tgid;
+   uargs = (void __user *) FRIDA_SYSCALL_ARG2 (regs);
+ 
++  if (!READ_ONCE (frida_process_ready))
++    return -ESHUTDOWN;
+   if (op == FRIDA_CONTROL_OP_PING)
+     return FRIDA_CONTROL_MAGIC;
+ 
+@@ -1526,7 +1760,12 @@ frida_call_on_kthread (long (* fn) (void * arg),
+   init_completion (&call.done);
+ 
+   mutex_lock (&frida_op_mutex);
+-  frida_op_pending = &call;
++  if (!READ_ONCE (frida_process_ready) || frida_op_worker == NULL)
++  {
++    mutex_unlock (&frida_op_mutex);
++    return -ESHUTDOWN;
++  }
++  WRITE_ONCE (frida_op_pending, &call);
+   wake_up (&frida_op_wq);
+   wait_for_completion (&call.done);
+   mutex_unlock (&frida_op_mutex);
+@@ -1541,12 +1780,12 @@ frida_op_worker_fn (void * unused)
+   {
+     struct frida_kthread_call * call;
+ 
+-    wait_event_interruptible (frida_op_wq, frida_op_pending != NULL || kthread_should_stop ());
++    wait_event (frida_op_wq, READ_ONCE (frida_op_pending) != NULL || kthread_should_stop ());
+     if (kthread_should_stop ())
+       break;
+ 
+-    call = frida_op_pending;
+-    frida_op_pending = NULL;
++    call = READ_ONCE (frida_op_pending);
++    WRITE_ONCE (frida_op_pending, NULL);
+     call->result = call->fn (call->arg);
+     complete (&call->done);
+   }
+@@ -1559,7 +1798,12 @@ frida_do_alloc (void * data)
+ {
+   const struct frida_alloc_args * args = data;
+ 
+-  return frida_kmod_process_alloc (args->pid, args->size, args->prot);
++  long result = frida_kmod_process_alloc (args->pid, args->size, args->prot);
++
++  if (trace_process_ops)
++    pr_info ("frida: process op=alloc pid=%u result=%ld tid=%ld\n",
++        args->pid, result ? 0L : -ENOMEM, 0L);
++  return result;
+ }
+ 
+ static long
+@@ -1567,7 +1811,12 @@ frida_do_free (void * data)
+ {
+   const struct frida_free_args * args = data;
+ 
+-  return frida_kmod_process_free (args->pid, args->address, args->size);
++  long result = frida_kmod_process_free (args->pid, args->address, args->size);
++
++  if (trace_process_ops)
++    pr_info ("frida: process op=free pid=%u result=%ld tid=%ld\n",
++        args->pid, result, 0L);
++  return result;
+ }
+ 
+ static long
+@@ -1575,7 +1824,12 @@ frida_do_write (void * data)
+ {
+   const struct frida_xfer_job * job = data;
+ 
+-  return frida_kmod_process_write (job->pid, job->address, job->buffer, job->size);
++  long result = frida_kmod_process_write (job->pid, job->address, job->buffer, job->size);
++
++  if (trace_process_ops)
++    pr_info ("frida: process op=write pid=%u result=%ld tid=%ld\n",
++        job->pid, result, 0L);
++  return result;
+ }
+ 
+ static long
+@@ -1583,7 +1837,12 @@ frida_do_read (void * data)
+ {
+   const struct frida_xfer_job * job = data;
+ 
+-  return frida_kmod_process_read (job->pid, job->address, job->buffer, job->size);
++  long result = frida_kmod_process_read (job->pid, job->address, job->buffer, job->size);
++
++  if (trace_process_ops)
++    pr_info ("frida: process op=read pid=%u result=%ld tid=%ld\n",
++        job->pid, result, 0L);
++  return result;
+ }
+ 
+ static long
+@@ -1591,7 +1850,12 @@ frida_do_spawn (void * data)
+ {
+   const struct frida_spawn_args * args = data;
+ 
+-  return frida_kmod_process_spawn_thread (args->pid, args->entry, args->stack, args->arg, args->tls);
++  long result = frida_kmod_process_spawn_thread (args->pid, args->entry, args->stack, args->arg, args->tls);
++
++  if (trace_process_ops)
++    pr_info ("frida: process op=spawn pid=%u result=%ld tid=%ld\n",
++        args->pid, result, result > 0 ? result : 0L);
++  return result;
+ }
+ 
+ static int __nocfi
+diff --git a/src/barebone/agent/src/lib.rs b/src/barebone/agent/src/lib.rs
+index bf6e161..20188a4 100644
+--- a/src/barebone/agent/src/lib.rs
++++ b/src/barebone/agent/src/lib.rs
+@@ -741,7 +741,11 @@ mod entrypoint_linux {
+             crate::run_constructors();
+             init_gum();
+ 
+-            kernel::install_hooks();
++            if !kernel::install_hooks() {
++                kernel::log("frida: process hooks failed; service unavailable\n\0");
++                WORKER_EXITED.store(true, Ordering::Release);
++                return;
++            }
+ 
+             match hostlink_chardev::Hostlink::init(Some(on_frame_from_host)) {
+                 Ok(hostlink) => transport_set(Transport::CharDevice(hostlink)),
+diff --git a/src/barebone/agent/src/linux/kmod.rs b/src/barebone/agent/src/linux/kmod.rs
+index c2a3f6d..18dca9c 100644
+--- a/src/barebone/agent/src/linux/kmod.rs
++++ b/src/barebone/agent/src/linux/kmod.rs
+@@ -27,8 +27,8 @@ pub fn spawn_thread(entry: ThreadEntry, parameter: *mut c_void) -> isize {
+     unsafe { frida_kmod_spawn_thread(entry, parameter) as isize }
+ }
+ 
+-pub fn install_hooks() {
+-    unsafe { frida_kmod_install_hooks() };
++pub fn install_hooks() -> bool {
++    unsafe { frida_kmod_install_hooks() == 0 }
+ }
+ 
+ pub fn alloc(size: usize) -> *mut u8 {
+@@ -314,7 +314,7 @@ unsafe extern "C" {
+     fn frida_kmod_log(message: *const c_char);
+     fn frida_kmod_panic(message: *const c_char) -> !;
+     fn frida_kmod_spawn_thread(entry: ThreadEntry, parameter: *mut c_void) -> c_int;
+-    fn frida_kmod_install_hooks();
++    fn frida_kmod_install_hooks() -> i32;
+     fn frida_kmod_alloc(size: usize) -> *mut u8;
+     fn frida_kmod_free(ptr: *mut u8, size: usize);
+     fn frida_kmod_alloc_code(size: usize) -> *mut u8;
