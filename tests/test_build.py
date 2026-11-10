@@ -2,6 +2,7 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 SPEC = importlib.util.spec_from_file_location("builder", Path(__file__).parents[1] / "scripts/build.py")
 builder = importlib.util.module_from_spec(SPEC)
@@ -131,6 +132,39 @@ class SymbolBootstrapTests(unittest.TestCase):
             builder.kallsyms_offset(self.map.replace("kallsyms_lookup_name", "unrelated"), self.symvers)
         with self.assertRaisesRegex(ValueError, "Invalid kallsyms offset"):
             builder.kallsyms_offset(self.map.replace("ffffffc008001000", "ffffffc008001001"), self.symvers)
+
+
+class DownloadCacheTests(unittest.TestCase):
+    def test_reuses_verified_bytes_and_refetches_corrupt_cache(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(builder, "WORK", Path(directory)):
+            def fake_download(*args):
+                Path(args[args.index("--output") + 1]).write_bytes(b"original artifact")
+            destination = Path(directory) / "artifact"
+            with mock.patch.object(builder, "run", side_effect=fake_download) as fetch:
+                builder.download("https://example.com/original", destination)
+                destination.unlink()
+                builder.download("https://example.com/original", destination)
+                self.assertEqual(fetch.call_count, 1)
+                self.assertEqual(destination.read_bytes(), b"original artifact")
+                record = builder.read_json(Path(directory) / "downloads.json")[-1]
+                self.assertTrue(record["cache_hit"])
+                cached = next(p for p in (Path(directory) / "download-cache").iterdir() if p.suffix == "")
+                cached.write_bytes(b"corrupted")
+                builder.download("https://example.com/original", destination)
+                self.assertEqual(fetch.call_count, 2)
+                self.assertEqual(destination.read_bytes(), b"original artifact")
+
+    def test_distinguishes_urls_with_the_same_output_name(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(builder, "WORK", Path(directory)):
+            def fake_download(*args):
+                Path(args[args.index("--output") + 1]).write_bytes(args[-1].encode())
+            destination = Path(directory) / "artifact"
+            with mock.patch.object(builder, "run", side_effect=fake_download) as fetch:
+                for name in ("one", "two", "one"):
+                    url = "https://example.com/" + name
+                    builder.download(url, destination)
+                    self.assertEqual(destination.read_text(), url)
+                self.assertEqual(fetch.call_count, 2)
 
 
 class SourceTests(unittest.TestCase):

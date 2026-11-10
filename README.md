@@ -101,6 +101,15 @@ Follow [the installation instructions](docs/INSTALL.md) after downloading the ar
 The workflow performs no device installation or boot image flashing.
 Artifacts expire after 30 days. Diagnostics expire after 14 days.
 
+## Build cache
+
+Actions caches apt package downloads, kernel Git objects, downloaded source artifacts and compiler archives, the Frida SDK, Rust toolchains, and Cargo dependencies.
+Each downloaded file is keyed by its full URL and checked against its recorded SHA256 before reuse. Corrupt entries are downloaded again.
+The environment cache key includes the kernel source and artifact inputs and the Frida version. Apt and Rust keys also rotate weekly so package updates can enter the cache.
+Prepared kernel headers and patched Frida source are rebuilt each run; configuration, source, and output checks still run on a cache hit.
+The apt and source caches are saved before compilation, so a later compile failure does not discard a prepared environment. Rust and Cargo caches are also saved after a compile failure.
+The first run fills the caches. Later runs show `Cache restored` and `Download cache hit` in the logs. GitHub may evict unused caches; a miss only causes a download.
+
 ## Development and sources
 
 Run `python3 -m unittest discover -s tests -v` to exercise input validation and kernel compatibility checks.

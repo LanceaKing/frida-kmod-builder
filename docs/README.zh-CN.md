@@ -60,3 +60,12 @@ Linux 5.10 缺少新版 Frida 的进程线程注入接口，因此该预设选�
 构建会检查 ELF 架构、版本字符串及配置是否变化，但不会在手机上加载模块。
 Frida 17.26.2 的 `CONFIG_SYSVIPC` 条件编译修复会随产物一起提供，详见[补丁说明](../patches/README.md)。
 安装流程见 [INSTALL.md](INSTALL.md)。
+
+## 构建缓存
+
+Actions 缓存 apt 安装包、内核 Git 对象、下载的内核产物和 Clang 工具链、Frida SDK、Rust 工具链及 Cargo 依赖。
+下载缓存按完整 URL 区分，每次复用前检查 SHA-256；文件损坏时重新下载。
+环境缓存键包含内核源码、产物参数和 Frida 版本。apt 与 Rust 缓存每周轮换，以纳入依赖更新。
+内核生成头文件和打过补丁的 Frida 源码仍会重新生成，配置与 ABI 检查不会跳过。
+apt 和源码缓存会在编译前保存，后续编译失败不会丢失已准备好的环境；Rust 与 Cargo 缓存也会在编译失败后保存。
+首次运行填充缓存，后续运行可在日志中看到 `Cache restored` 和 `Download cache hit`。GitHub 清理缓存后，工作流会自动重新下载。

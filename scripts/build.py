@@ -3,6 +3,7 @@
 
 import argparse
 import base64
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -124,13 +125,32 @@ def sha256(path):
 
 
 def download(url, path):
-    # Android CI's raw URLs support GET. HEAD can incorrectly return 404.
-    run("curl", "--fail", "--location", "--retry", "4", "--retry-all-errors",
-        "--connect-timeout", "30", "--max-time", "1200", "--output", path, url)
+    cache = WORK / "download-cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    key = hashlib.sha256(url.encode()).hexdigest()
+    cached, metadata = cache / key, cache / (key + ".json")
+    hit = False
+    if cached.is_file() and metadata.is_file():
+        try:
+            record = read_json(metadata)
+            hit = record.get("url") == url and record.get("sha256") == sha256(cached)
+        except (ValueError, OSError):
+            pass
+    if hit:
+        print(f"Download cache hit: {url}", flush=True)
+    else:
+        partial = cache / (key + ".partial")
+        # Android CI's raw URLs support GET. HEAD can incorrectly return 404.
+        run("curl", "--fail", "--location", "--retry", "4", "--retry-all-errors",
+            "--connect-timeout", "30", "--max-time", "1200", "--output", partial, url)
+        require(partial.stat().st_size > 0, f"Downloaded an empty file: {url}")
+        partial.replace(cached)
+        write_json(metadata, {"url": url, "sha256": sha256(cached)})
+    shutil.copy2(cached, path)
     require(path.stat().st_size > 0, f"Downloaded an empty file: {url}")
     records = WORK / "downloads.json"
     entries = read_json(records) if records.exists() else []
-    record = {"url": url, "file": path.name, "sha256": sha256(path)}
+    record = {"url": url, "file": path.name, "sha256": sha256(path), "cache_hit": hit}
     parsed = urllib.parse.urlsplit(url)
     if parsed.hostname == "android.googlesource.com" and urllib.parse.parse_qs(parsed.query).get("format") == ["TEXT"]:
         record["transport_sha256"] = record["sha256"]
@@ -155,13 +175,30 @@ def configure():
     if output := os.environ.get("GITHUB_OUTPUT"):
         with open(output, "a") as stream:
             stream.write(f"artifact_name={c['artifact_name']}\n")
+            environment = {key: value for key, value in c.items()
+                           if key not in ("agent_mode", "module_name", "artifact_name", "include_server", "rust_toolchain")}
+            key = hashlib.sha256(json.dumps(environment, sort_keys=True).encode()).hexdigest()
+            stream.write(f"environment_cache_key={key}\n")
+            stream.write(f"cache_epoch={datetime.now(timezone.utc).strftime('%G-W%V')}\n")
 
 
 def git_checkout(repository, ref, destination):
-    run("git", "init", destination)
-    run("git", "-C", destination, "remote", "add", "origin", repository)
-    run("git", "-C", destination, "fetch", "--depth=1", "origin", ref)
-    run("git", "-C", destination, "checkout", "--detach", "FETCH_HEAD")
+    if (destination / ".git").is_dir():
+        require(run("git", "-C", destination, "remote", "get-url", "origin", capture=True).strip() == repository,
+                "Cached Git repository has the wrong origin.")
+    else:
+        run("git", "init", destination)
+        run("git", "-C", destination, "remote", "add", "origin", repository)
+    present = bool(re.fullmatch(r"[0-9a-f]{40}", ref)) and subprocess.run(
+        ["git", "-C", str(destination), "cat-file", "-e", ref + "^{commit}"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    if present:
+        print(f"Git object cache hit: {ref}", flush=True)
+    else:
+        run("git", "-C", destination, "fetch", "--depth=1", "origin", ref)
+    # Only the scratch repository's .git directory is cached. Restore its files
+    # from the verified commit before applying any version-specific patches.
+    run("git", "-C", destination, "checkout", "--detach", "--force", ref if present else "FETCH_HEAD")
     return run("git", "-C", destination, "rev-parse", "HEAD", capture=True).strip()
 
 
