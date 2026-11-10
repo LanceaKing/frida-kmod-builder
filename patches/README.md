@@ -67,3 +67,8 @@ It increases the synthetic TLS block to 64 KiB, so the existing layout reserves 
 The target libc accesses offset `0x2fa1` in that area, beyond the original 2 KiB capacity.
 The kernel-module builder does not select this server patch.
 See the [server build and validation record](../docs/SERVER-ANDROID13-TLS.md) for App tests using the official startup policy helper.
+
+`17.26.2/server/0002-kernel-injection-connection-cleanup.patch` follows the TLS patch in the server build.
+It cancels each pending accept/handshake when its injection attempt ends and closes connections whose handshake failed.
+Concurrent target-exit probes exposed the missing cleanup as a leaked abstract Unix listener after each failed injection.
+The kernel-module builder does not select this patch. The official policy helper, entrypoints, and prctl ABI remain unchanged.

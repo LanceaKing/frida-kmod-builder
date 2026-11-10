@@ -1,10 +1,10 @@
 # Pixel 7a full-mode acceptance record
 
-Status: **experimental; scoped Calculator and kernel-session tests passed**. This is not general App or kernel support.
+Status: **experimental; extended App teardown acceptance failed**. The PR remains a draft.
 
 Revision `0bae5f8` passes the process probe, normal module reload, and a minimal kernel JavaScript session on the target device.
 The rebuilt server fixes the observed synthetic Bionic TLS capacity error.
-Direct server startup restores official SELinux initialization. Calculator Native/Java hooks, spawn, cancellation, and ten attach cycles now pass.
+Direct server startup restores official SELinux initialization. Callback and injection checks pass, but later App tests exposed crashes after Java hook unload.
 
 The scope is arm64 Apps, Frida 17.26.2, and kernel `5.10.157-android13-4-00003-g776d0a76f6aa-ab10208116` from source `776d0a76f6aa7c5a92c60afbe886a8e786953199`.
 The backport keeps the official prctl ABI. The latest device test uses a server with the scoped Android TLS patch.
@@ -149,10 +149,56 @@ The App retained its `untrusted_app` context. Global Enforcing does not imply th
 Both direct servers remained listening: Barebone on 27042 and ordinary Android on 27043, bound to device loopback and forwarded through ADB.
 No client session remained. The module reference count was one because the Barebone server held `/dev/frida`.
 This test did not reload the module; the three-load/two-unload result above remains the module lifecycle evidence.
-The concurrent target-exit-during-injection race, other Apps, 32-bit targets, and other kernel builds remain untested.
+At this stage, concurrent target exit and other Apps were untested. The extended tests below supersede that acceptance status.
 
 Raw device logs, policy snapshots, host events, and the summary are stored locally in `.work/official-entry-validation-20261110/`.
 The distributable server bundle includes `device-validation.json`; policy binaries and device logs are not committed.
+
+## Extended Apps and concurrent target exit
+
+The extended matrix covered Clock (`untrusted_app`), Settings (`system_app`), and DocumentsUI (`priv_app`).
+Each completed ten attach/script-unload/detach cycles with Native and Java callbacks.
+Clock and Settings also completed spawn/resume and cancel-before-resume probes.
+DocumentsUI used its document-picker activity because it has no launcher activity.
+These initial probes checked callbacks and cleanup API results, but did not observe the process after detach.
+
+The exit probe uses `exit-on-injection.c` to watch the module's operation records in `/dev/kmsg`.
+It verifies the target package and uses a pidfd to send SIGKILL without a PID-reuse hazard.
+The four trigger events are allocation, write, spawn, and target-thread readiness.
+They select scheduling windows, not exact kernel instructions or every possible interleaving.
+
+The first three failed injections each left a pending abstract Unix listener in the server.
+The server FD count grew by three after the clients disconnected.
+The [connection-cleanup patch](SERVER-ANDROID13-TLS.md) cancels the per-attempt accept/handshake and closes connections whose handshake failed.
+The rebuilt server SHA256 is `77eecc8c7145793cd162bef0cfdca5ce0e044c46782935a51a09c8d91800b813`.
+Both server patches apply in order and exactly match the built source. The module and official policy helper are unchanged.
+
+The corrected server completed five exits at each trigger, for 20 attempts.
+Ten calls returned `NotSupportedError`, four returned `TransportError`, and six reached the existing connection timeout.
+All returned within 10.84 seconds without external cancellation. No pending listener remained after any attempt.
+The server FD count before each call stayed at 60. Each attempt was followed by a new target and successful Native/Java callbacks.
+The test records device-side signal markers because ADB output and RPC errors can arrive at the host in different orders.
+
+The final crash-log review invalidated full acceptance despite those successful API results.
+Settings spawn PID 24997 reported SIGSEGV. Calculator recovery PIDs 27544, 29324, and 30356 also crashed after hook unload.
+The Calculator tombstones all enter the old Java `identityHashCode()` callback from ART's generic JNI trampoline.
+They resolve to `gum_quick_value_from_ffi()` at agent offset `0xe81188`, called by `gum_quick_native_callback_invoke()`.
+The faulting instruction reads an invalid FFI field-type pointer. Callback lifetime or stale method dispatch remains under investigation.
+This is not the earlier Bionic TLS fault, and it is not a kernel panic.
+
+The App runner now observes survival for three seconds after detach, before terminating a spawned target, and exits nonzero on cleanup failure.
+Ten fresh Calculator runs without the module and ten after restoring it passed this stronger check.
+Those bounded controls did not reproduce the crash. They do not explain or resolve the recorded failures, or establish which backend caused them.
+The readiness gate therefore remains failed. Do not replace it with callback-only success.
+
+The control experiment used normal module removal and restored the same artifact afterward.
+This brings same-boot lifecycle evidence to four loads and three normal unloads, with no forced unload or kernel fault.
+The restored module and corrected server passed the minimal PID 0 JavaScript session.
+Root, boot ID, global Enforcing state, and the post-official-startup policy hash stayed unchanged.
+Both direct servers are running again on loopback ports 27042 and 27043. No probe client remains attached.
+
+Evidence is stored locally in `.work/extended-validation-20261110/`, including the pre-fix leak, corrected tests, controls, and three Calculator tombstones.
+The crash and device logs are not committed. Other kernels, 32-bit Apps, exhaustive interleavings, and long-duration stress remain outside the tested scope.
 
 | Acceptance stage | Result |
 | --- | --- |
@@ -160,13 +206,14 @@ The distributable server bundle includes `device-validation.json`; policy binari
 | Offline builds | Passed for both revisions and modes |
 | CRC, vermagic, CFI and writable sections | Passed for current full and kernel-only bundles |
 | First full startup | Failed before service readiness; artifact rejected |
-| Current full startup and normal reload | Three loads and two unloads passed |
+| Current full startup and normal reload | Four loads and three normal unloads passed |
 | Alloc/read/write/free and user-thread probe | Passed |
 | Rebuilt server TLS capacity | Built and verified; original crash did not recur |
-| Calculator Native and Java hooks | Passed with official policy initialization and the TLS-corrected server |
-| Spawn and cancellation | Passed; both disposable processes terminated during cleanup |
-| Ten attach/unload/detach cycles | Passed; Native and Java callbacks in every round |
-| Invalid PID and target exit | Process probes and App lifecycle passed; concurrent injection/exit race remains untested |
+| Native and Java hooks in four Apps | Callbacks observed; post-unload crashes prevent full acceptance |
+| Spawn and cancellation | API operations complete; Settings post-unload SIGSEGV remains unresolved |
+| Ten attach/unload/detach cycles | Completed in each additional App; survival checks now required |
+| Concurrent injection/exit | 20 bounded aborts with no listener leak; three recovery targets later crashed |
+| Invalid PID and target exit | Process probes and active-session termination passed |
 | Server restart and reconnect | Passed for kernel and App entrypoints |
 | Kernel injection trace plus agent connection | Matching allocation, write, bootstrap TID, and script messages observed |
 | Minimal kernel JS session | Passed before/after reload, with the rebuilt server, and with direct official startup |
@@ -184,7 +231,13 @@ The host must compare the reported UID with the target's UID and inspect `/proc/
 Install its Java bridge with `npm ci --prefix tests/device`.
 The hooks report original `getpid()` and `System.identityHashCode()` results and preserve those results.
 The runner supports attach, spawn, cancel-before-resume, and repeated sessions, with bounded operations and cleanup.
+It also observes target survival after detach. Capture crash logs for the tested PIDs, including after the runner returns.
 The results above come from these probes; the scripts alone do not establish successful injection.
+
+Compile `tests/device/exit-on-injection.c` with an Android arm64 NDK compiler and push it to `/data/local/tmp/exit-on-injection`.
+Run `tests/device/app-exit-race.py` with the device serial, disposable target PID, package, server PID, trigger stage, and output path.
+The module must have `trace_process_ops=1`. The probe kills only the specified target and records kernel signal markers and server resources.
+An operation result in its JSON does not accept post-detach recovery by itself. Keep the crash-log and survival checks as separate gates.
 
 The earlier `server-no-policy.c` launcher masked policy reads in a private mount namespace.
 It preserved the current policy but prevented official agent-file setup. The launcher has been removed.

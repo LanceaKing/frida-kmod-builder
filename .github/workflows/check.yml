@@ -13,4 +13,5 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 -m unittest discover -s tests -v
-      - run: python3 -m py_compile scripts/build.py
+      - run: python3 -m py_compile scripts/build.py tests/device/app-session.py tests/device/app-exit-race.py
+      - run: cc -Wall -Wextra -Werror -fsyntax-only tests/device/exit-on-injection.c

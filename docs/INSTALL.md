@@ -84,7 +84,9 @@ The Pixel 7a full preset is experimental. Check [its acceptance record](PIXEL-5.
 Revision `0bae5f8` passes a minimal kernel session and normal reload on the pinned device.
 The unchanged Frida 17.26.2 server crashes during App attach because its synthetic Bionic TLS area is too small.
 The [rebuilt Android server](SERVER-ANDROID13-TLS.md) corrects that capacity error.
-With official server startup, Calculator Native/Java hooks, ten attach cycles, spawn, and cancellation passed on this device.
+With official server startup, Native/Java callbacks and bounded injection tests work on this device.
+Extended tests also found unresolved App crashes after Java hook unload. Do not treat callback success as complete device acceptance.
+Use the current server with both the TLS and connection-cleanup patches described in its build record.
 Barebone remains on port 27042 for `-p 0`. App injection uses a second, ordinary Android server on port 27043.
 Both use the Android arm64 server for Frida 17.26.2. The latest validation uses the documented TLS rebuild.
 
