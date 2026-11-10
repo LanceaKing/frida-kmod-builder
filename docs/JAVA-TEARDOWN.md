@@ -119,3 +119,7 @@ Local diagnosis evidence is in `.work/teardown-investigation-20261110/`.
 Candidate evidence is in `.work/teardown-candidate-20261110/`.
 Final acceptance evidence is in `.work/teardown-acceptance-20261110/`.
 The repository excludes device logs and binaries.
+
+## Fork follow-up acceptance
+
+The [fork migration record](FORKS.md) supersedes the earlier acceptance for current installs. The ten-line inline-restoration correction passed 50 concurrent unloads with Java stack walking on the fork full module and 30 Settings spawns using the final pinned bridge, including 10 on that module. No new tombstone appeared after the fix. The server entrypoints and SELinux helper remain unchanged.

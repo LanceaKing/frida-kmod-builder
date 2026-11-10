@@ -53,7 +53,7 @@ Linux 5.10 缺少新版 Frida 的进程线程注入接口，因此该预设选�
 
 ## 调整其他参数
 
-`frida_version` 同时选择源码、GumJS devkit 和 server 的版本。
+`frida_version` 必须有对应的 fork 源码锁文件，目前为 `17.26.2`；它也选择官方 GumJS devkit 的版本。
 `rust_toolchain` 选择 Rust 编译器。`module_name` 修改 `.ko` 名称。
 `include_server` 决定是否将同版本 Android arm64 server 放入产物。
 完整参数表见[英文 README](../README.md#inputs)。

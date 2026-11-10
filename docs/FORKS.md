@@ -21,7 +21,7 @@ Install the tools wheel in an isolated environment with the matching client:
 ```sh
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install 'frida==17.26.2' 'https://github.com/LanceaKing/frida/releases/download/17.26.2-pixel-5.10.2/frida_tools-14.13.1.dev3-py3-none-any.whl'
+python -m pip install 'frida==17.26.2' 'https://github.com/LanceaKing/frida/releases/download/17.26.2-pixel-5.10.2/frida_tools-14.13.1.dev3-py3-none-any.whl#sha256=c8daeb940b86a28581ca5888611e2f13f0001b8d83a3687ef5f94aed02111a3e'
 frida --version
 ```
 
@@ -31,4 +31,12 @@ Verify the wheel SHA256 against `tools.wheel_sha256` in the source lock when dow
 
 Git tree comparison confirmed all three core profiles reproduce the old patch chains exactly. The initial fresh npm install reproduced the three previously tested Java bridge files. Migration then exposed an additional ART inline-patch restoration race; the follow-up commit is documented in [the teardown report](JAVA-TEARDOWN.md#inline-art-patch-restoration-race). The tools bridge bundle and wheel built successfully, and all 33 builder tests passed, including rejection of moving source refs and archive or binary checksum mismatches.
 
-The initial full and kernel-only fork builds passed Actions. The final bridge follow-up is undergoing device regression before PR readiness. Prior acceptance remains scoped to the pinned Pixel 7a Android 13 arm64 device. This migration does not establish compatibility with other ART or kernel versions.
+The final source lock passed the [full build](https://github.com/LanceaKing/frida-kmod-builder/actions/runs/42827336519) and [kernel-only build](https://github.com/LanceaKing/frida-kmod-builder/actions/runs/42827343307), including server checksum validation and module ABI checks.
+
+Both downloaded fork modules passed normal unload/load and a Barebone PID 0 script. Their SHA256 values match the final CI artifacts exactly: full `b3bd71cae80fcdcb2f30dfbf9eea56e21c7aa4d1db88beac138c32ecd19f73d7`, kernel-only `991cf94fa1b9db95004b418aa717310f9f032dd9fbf8be1ae88b97fc8a218efb`. The fork CLI loaded its bundled Java bridge, installed a Java hook, unloaded it, and left Settings alive. A clean fork install also passed 30 application attach cycles, two spawns, two cancellations, 20 target-exit races with 20 recovery injections, and invalid/exited-PID and process-termination checks.
+
+The initial concurrent race probe rejected a listener belonging to another active injection. The accepted 20-race run was serialized, and every round ended with zero pending bootstrap listeners. Prior acceptance remains scoped to the pinned Pixel 7a Android 13 arm64 device. This migration does not establish compatibility with other ART or kernel versions.
+
+The final fork full module, server, and pinned bridge passed 50 concurrent hook unloads with Java stack walking and 10 Settings spawns. Another 20 Settings spawns passed with the same final bridge before the module switch. Both module binaries match the final CI outputs. The boot ID and SELinux policy hash stayed unchanged; enforcement remained enabled. No new tombstone or kernel fault appeared after the inline-restoration fix.
+
+Raw local test records are retained under `.work/forks/final/`. The earlier failing preview is marked superseded; use release `17.26.2-pixel-5.10.2`.

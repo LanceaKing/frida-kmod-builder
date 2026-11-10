@@ -4,12 +4,12 @@
 
 Do not load artifacts from commit `d5f6682` or earlier on the Pixel 7a Android 13 preset.
 A device test caused a kernel panic during agent startup.
-The builder now removes the conflicting ELF flag, but the revised module still needs runtime validation.
+The builder now removes the conflicting ELF flag. See the [pinned-device acceptance record](docs/PIXEL-5.10-FULL.md) for subsequent validation.
 Read the [incident report](docs/PIXEL-5.10-PANIC.md) before using this preset.
 
 Build `frida-agent.ko` for an Android arm64 kernel with GitHub Actions.
 Select the kernel family, complete kernel release, Frida version, and source artifacts in the **Run workflow** form.
-The workflow builds the upstream [Frida Barebone Linux agent](https://github.com/frida/frida-core/tree/17.26.2/src/barebone/agent/linux).
+The workflow builds a [pinned fork](docs/FORKS.md) of the official Frida Barebone Linux agent.
 
 KernelSU can provide the root access needed to load the module.
 The module must match the running kernel, including its configuration and symbol versions.
@@ -36,7 +36,7 @@ For a vendor kernel, provide its exact source revision and prepared artifacts.
 | --- | --- |
 | `kernel_release` | Complete `uname -r` value. Required. |
 | `kernel_family` | Consistency check for the Android generation and kernel branch. `auto` detects them. |
-| `frida_version` | Release used for the source, GumJS devkit, and optional server. Default: `17.26.2`. |
+| `frida_version` | Version with a committed fork source lock. Currently `17.26.2`; also selects the official GumJS devkit. |
 | `kernel_repository` | HTTPS Git URL for the kernel source. Default: Google's `kernel/common`. |
 | `kernel_ref` | Exact commit or tag. Empty extracts the commit from `kernel_release`. |
 | `android_ci_build` | Android CI build ID. Empty extracts the `-ab` suffix. |
