@@ -1,0 +1,47 @@
+# Frida 内核模块构建
+
+本仓库通过 GitHub Actions 为 Android arm64 构建 `frida-agent.ko`。
+在 **Actions → Build Frida kernel module → Run workflow** 中填写参数即可启动。
+构建完成后，在该次运行页面的 **Artifacts** 中下载产物。
+
+## 选择目标内核
+
+先在电脑执行：
+
+```sh
+adb shell uname -r
+```
+
+将完整输出填入 `kernel_release`。`kernel_family` 可保持 `auto`，也可手动选择对应分支。
+标准 GKI 版本中的 `-g提交号-ab构建号` 用于定位源码和 Android CI 产物。
+`kernel_ref` 和 `android_ci_build` 可以覆盖自动识别结果。
+仓库默认值来自 Frida 官方示例，不代表你的设备版本。
+
+只有 `5.10`、`6.1` 或 Android 版本号不够。模块还依赖完整构建版本、内核配置和符号 CRC。
+分支下拉框表示可选目标，不表示所有分支都经过验证。
+页大小、CFI 等内核配置直接使用原构建的 `.config`，构建器不会修改这些选项。
+
+## 使用厂商或自定义内核
+
+提供 `kernel_repository`、`kernel_ref`、`prepare_url` 和 `symvers_url`。
+后两个 URL 必须同时填写，并且指向同一次内核构建的准备包与 `Module.symvers`。
+准备包根目录需要包含 `.config`、`Makefile`、生成的头文件和 x86-64 Linux 构建工具。
+只提供内核源码或配置文件不能代替这两个构建产物。
+
+`kernel_clang_url=auto` 从 `.config` 读取 Android Clang 修订号，并从对应 Android 发布分支下载。
+若原编译器不在该分支，填入正确的编译器 tar 包 URL。解压后根目录应包含 `bin/clang`。
+`system` 使用 LLVM 19，仅适用于兼容该编译器的目标。
+Frida agent 部分独立使用 LLVM 19，以满足 soft-float 构建要求。
+
+## 调整其他参数
+
+`frida_version` 同时选择源码、GumJS devkit 和 server 的版本。
+`rust_toolchain` 选择 Rust 编译器。`module_name` 修改 `.ko` 名称。
+`include_server` 决定是否将同版本 Android arm64 server 放入产物。
+完整参数表见[英文 README](../README.md#inputs)。
+
+产物包含模块、连接配置、构建来源记录、SHA-256 和安装说明。
+失败时可下载 diagnostics 查看日志。
+这是公开仓库，只填写可公开的下载地址。
+构建会检查 ELF 架构、版本字符串及配置是否变化，但不会在手机上加载模块。
+安装流程见 [INSTALL.md](INSTALL.md)。

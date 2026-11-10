@@ -1,0 +1,14 @@
+# Third-party components
+
+The scripts download upstream components during each build.
+This repository does not include their source or binary files.
+The license for this repository applies only to its original scripts and documentation.
+
+- [Frida Core](https://github.com/frida/frida-core): wxWindows Library Licence 3.1 terms in the upstream repository.
+- [Frida Gum](https://github.com/frida/frida-gum): wxWindows Library Licence 3.1 terms in the upstream repository.
+- [Linux](https://android.googlesource.com/kernel/common): GPL-2.0 and per-file terms in the selected source tree.
+- [Android Clang prebuilts](https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86): upstream LLVM and bundled component notices.
+- [Frida SDK dependencies](https://github.com/frida/releng): each dependency retains its upstream license.
+
+Build artifacts retain all applicable upstream license obligations.
+Source revisions and download locations are recorded in `build-info.json`.

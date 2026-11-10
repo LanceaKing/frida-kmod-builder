@@ -1,0 +1,97 @@
+# Frida kernel module builder
+
+[中文说明](docs/README.zh-CN.md) · [Run a build](../../actions/workflows/build.yml)
+
+Build `frida-agent.ko` for an Android arm64 kernel with GitHub Actions.
+Select the kernel family, complete kernel release, Frida version, and source artifacts in the **Run workflow** form.
+The workflow builds the upstream [Frida Barebone Linux agent](https://github.com/frida/frida-core/tree/17.26.2/src/barebone/agent/linux).
+
+KernelSU can provide the root access needed to load the module.
+The module must match the running kernel, including its configuration and symbol versions.
+The workflow preserves the supplied kernel configuration and checks the module version string before upload.
+A successful build does not establish that the module loads or runs correctly on a device.
+
+## Build a module
+
+1. Read the complete kernel release from your device with `adb shell uname -r`.
+2. Open **Actions → Build Frida kernel module → Run workflow**.
+3. Set `kernel_release` to the complete output from step 1.
+4. Select the kernel family, or keep `auto`.
+5. Enter any source overrides required by your kernel.
+6. Start the workflow and download the module artifact from the completed run.
+
+The default values use the kernel build in Frida's upstream example.
+They are a build example, not a device recommendation.
+For a standard Android CI release, the workflow extracts the source commit and build ID from `-gCOMMIT-abBUILD`.
+For a vendor kernel, provide its exact source revision and prepared artifacts.
+
+## Inputs
+
+| Input | Purpose |
+| --- | --- |
+| `kernel_release` | Complete `uname -r` value. Required. |
+| `kernel_family` | Consistency check for the Android generation and kernel branch. `auto` detects them. |
+| `frida_version` | Release used for the source, GumJS devkit, and optional server. Default: `17.26.2`. |
+| `kernel_repository` | HTTPS Git URL for the kernel source. Default: Google's `kernel/common`. |
+| `kernel_ref` | Exact commit or tag. Empty extracts the commit from `kernel_release`. |
+| `android_ci_build` | Android CI build ID. Empty extracts the `-ab` suffix. |
+| `android_ci_target` | Android CI target. Default: `kernel_aarch64`. |
+| `prepare_url` | Public HTTPS URL for a prepared kernel archive. Set with `symvers_url`. |
+| `symvers_url` | Public HTTPS URL for `Module.symvers` from the same build. |
+| `kernel_clang_url` | `auto`, `system`, or an HTTPS compiler archive URL. See below. |
+| `rust_toolchain` | Rust version or dated nightly for the agent. Default: `1.99.1`. |
+| `module_name` | Output name without `.ko`. Default: `frida-agent`. |
+| `include_server` | Include the matching Android arm64 `frida-server`. Default: enabled. |
+
+The family list is an input selector, not a list of tested kernels.
+Selecting a family does not download a generic replacement kernel.
+Changing only the version string cannot make a module compatible with a different build.
+Kernel feature and page-size choices come from the supplied `.config` file.
+
+## Kernel artifacts and compilers
+
+A prepared kernel archive contains the configured build tree needed by external modules.
+Place `.config`, `Makefile`, `include/generated/utsrelease.h`, and prepared build tools at the archive root.
+Supply the original `Module.symvers` separately. It contains symbol version checksums.
+The script requires these files even when a kernel uses the same source branch as another build.
+
+The runner is x86-64 Ubuntu 24.04. Prepared tools must run on x86-64 Linux.
+The kernel must enable `CONFIG_ARM64`, `CONFIG_MODULES`, `CONFIG_KPROBES`, and `CONFIG_KALLSYMS_ALL`.
+This workflow produces unsigned modules. It rejects `CONFIG_MODULE_SIG_FORCE=y`.
+Kernel versions, vendor changes, and upstream Frida support can impose further requirements.
+
+The agent uses LLVM 19 and the `none-arm64-softfloat_nopic` SDK selected by Frida's pinned `releng` revision.
+The kernel wrapper uses a separate compiler.
+With `kernel_clang_url=auto`, the script reads the Android compiler revision from `.config`.
+It downloads that compiler from the corresponding `androidN-release` prebuilt branch.
+If that branch lacks the revision, supply the exact compiler archive URL yourself.
+The archive must contain `bin/clang` at its root.
+
+`kernel_clang_url=system` selects the runner's LLVM 19 for the kernel wrapper too.
+Use it only when LLVM 19 is suitable for the target kernel.
+The build fails if kbuild changes the supplied `.config` or the output version string differs.
+The workflow does not change CFI, page size, module signatures, or symbol-version checks to make a build pass.
+
+## Output and installation
+
+The module artifact contains the `.ko`, `linux-kmod.json`, `modinfo.txt`, `build-info.json`, `SHA256SUMS`, and installation instructions.
+It also contains `frida-server` when requested.
+`build-info.json` records source commits, downloaded file hashes, compiler versions, and the Actions run URL.
+The separate diagnostics artifact contains resolved inputs and logs, including on failed runs.
+Use public download URLs. Actions inputs and diagnostics are visible in this public repository.
+
+Follow [the installation instructions](docs/INSTALL.md) after downloading the artifact.
+The workflow performs no device installation or boot image flashing.
+Artifacts expire after 30 days. Diagnostics expire after 14 days.
+
+## Development and sources
+
+Run `python3 -m unittest discover -s tests -v` to exercise input validation and kernel compatibility checks.
+The four stages in `scripts/build.py` are `configure`, `prepare`, `build`, and `package`.
+Each input also has an uppercase environment variable for local Linux builds.
+Temporary files stay in `.work/`, and packaged files stay in `dist/`.
+
+The Actions form takes inspiration from [WildKernels/GKI_KernelSU_SUSFS](https://github.com/WildKernels/GKI_KernelSU_SUSFS).
+This repository does not copy its kernel patches or build a replacement kernel.
+The build follows [Frida's Linux module instructions](https://github.com/frida/frida-core/blob/17.26.2/src/barebone/agent/linux/README.md).
+Frida and the Linux kernel retain their upstream licenses. See [third-party notices](THIRD_PARTY_NOTICES.md).
