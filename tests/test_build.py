@@ -126,12 +126,13 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(result["android_ci_build"], "")
         self.assertEqual(result["kernel_ref"], "vendor-tag")
 
-    def test_fork_profiles_keep_pixel_modes_separate(self):
+    def test_fork_modes_share_one_source_commit(self):
         configs = [builder.configuration(builder.read_json(builder.ROOT / "presets" / name))
                    for name in ("pixel-7a-android13-5.10.json", "pixel-7a-android13-5.10-full.json")]
         sources = [builder.frida_source(c) for c in configs]
         self.assertEqual([s["profile"] for s in sources], ["kernel-only", "full-5.10"])
-        self.assertNotEqual(sources[0]["commit"], sources[1]["commit"])
+        self.assertEqual(sources[0]["commit"], sources[1]["commit"])
+        self.assertEqual(sources[0]["commit"], builder.frida_source(builder.configuration({}))["commit"])
         self.assertEqual(sources[0]["repository"], sources[1]["repository"])
         self.assertEqual(builder.frida_source(builder.configuration({}))["profile"], "common")
         for source in sources:
@@ -141,7 +142,7 @@ class ConfigurationTests(unittest.TestCase):
     def test_fork_source_rejects_unpinned_revision(self):
         c = builder.configuration({})
         lock = builder.read_json(builder.ROOT / "sources/frida-17.26.2.json")
-        lock["core"]["profiles"]["common"] = "main"
+        lock["core"]["commit"] = "main"
         with mock.patch.object(builder, "read_json", return_value=lock):
             with self.assertRaisesRegex(ValueError, "full commit SHA"):
                 builder.frida_source(c)

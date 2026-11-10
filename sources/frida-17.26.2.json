@@ -2,12 +2,8 @@
   "version": "17.26.2",
   "core": {
     "repository": "https://github.com/LanceaKing/frida-core.git",
-    "upstream_commit": "2a41a960fe9b7fc0ccc85003e4f31f0caeec4d8d",
-    "profiles": {
-      "common": "fdc9da5ab29ac5bbe32c8b68ff7d3cc43c3ae230",
-      "full-5.10": "32e5a832a5fd837456f6341f53ec075925683925",
-      "kernel-only": "7a888d58a69b0141969762483af214c3ac43c2ff"
-    }
+    "upstream_commit": "588ac3b3ded6779f095825df5c64cab59f0c6774",
+    "commit": "064c422891b009c1501f420c46d54036fc969cb1"
   },
   "java_bridge": {
     "repository": "https://github.com/LanceaKing/frida-java-bridge.git",

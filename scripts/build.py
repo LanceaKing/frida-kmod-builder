@@ -131,7 +131,7 @@ def frida_source(c):
         profile = "kernel-only"
     elif c["kernel_release"] == PIXEL_510_RELEASE:
         profile = "full-5.10"
-    commit = lock["core"]["profiles"][profile]
+    commit = lock["core"]["commit"]
     require(re.fullmatch(r"[0-9a-f]{40}", commit), "Fork sources require a full commit SHA, not a branch or tag.")
     server = lock["server"]
     https_url(server["url"])
@@ -488,6 +488,8 @@ def build():
     if c["kernel_image_url"]:
         extra_args += [f"KERNELRELEASE={c['kernel_release']}", "LLVM_IAS=1", "CROSS_COMPILE=aarch64-linux-gnu-"]
     definitions = ["-DFRIDA_KERNEL_ONLY"] if c["agent_mode"] == "kernel-only" else []
+    if c["agent_mode"] == "full" and c["kernel_release"] == PIXEL_510_RELEASE:
+        definitions.append("-DFRIDA_LINUX_510_BACKPORT")
     if sources.get("symbol_bootstrap"):
         offset = sources["symbol_bootstrap"]["kallsyms_lookup_name_offset"]
         definitions += ["-DFRIDA_GKI_TRIMMED_EXPORTS", f"-DFRIDA_KALLSYMS_LOOKUP_OFFSET={offset}UL"]
