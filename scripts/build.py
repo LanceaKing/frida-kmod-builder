@@ -221,17 +221,17 @@ def prepare_from_image(c, prepared):
     image = WORK / "kernel-image"
     download(c["kernel_image_url"], image)
     env = dict(os.environ, LC_ALL="C")
-    original = run("bash", source / "scripts/extract-ikconfig", image, env=env, capture=True)
+    raw_image = image
+    with image.open("rb") as stream:
+        magic = stream.read(4)
+    if magic in (b"\x02\x21\x4c\x18", b"\x04\x22\x4d\x18"):
+        raw_image = WORK / "kernel-image.raw"
+        run("lz4", "-d", "-f", image, raw_image)
+    require(b"Linux version " + c["kernel_release"].encode() + b" " in raw_image.read_bytes(),
+            "The kernel image release does not match kernel_release; supply an Image or LZ4 image.")
+    original = run("bash", source / "scripts/extract-ikconfig", raw_image, env=env, capture=True)
     require(hashlib.sha256(original.encode()).hexdigest() == c["kernel_config_sha256"],
             "The image's embedded configuration does not match the target configuration SHA256.")
-    require(c["kernel_release"].encode() in image.read_bytes() or
-            c["kernel_image_url"].split("?")[0].endswith(".lz4"),
-            "The kernel image does not contain the expected release string.")
-    # Check the banner in an LZ4 image as well as its embedded configuration.
-    if c["kernel_image_url"].split("?")[0].endswith(".lz4"):
-        run("lz4", "-d", "-f", image, WORK / "kernel-image.raw")
-        require(b"Linux version " + c["kernel_release"].encode() + b" " in
-                (WORK / "kernel-image.raw").read_bytes(), "The kernel image release does not match kernel_release.")
     (prepared / "original.config").write_text(original)
     clang_url, clang_bin = prepare_compiler(c, config_options(original))
     # Android 5.10 treats LLVM as a boolean and finds these tools through PATH.
