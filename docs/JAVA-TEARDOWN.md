@@ -31,6 +31,14 @@ The existing JVM and Dalvik disposal paths remain unchanged.
 The thread-list lock requirement comes from [ART's `ThreadList::ForEach` declaration](https://android.googlesource.com/platform/art/+/refs/tags/android-13.0.0_r75/runtime/thread_list.h#140).
 The inspection reads each frame's method through [ART's `StackVisitor::GetMethod`](https://android.googlesource.com/platform/art/+/refs/tags/android-13.0.0_r75/runtime/stack.cc#104).
 
+## Inline ART patch restoration race
+
+Fork migration testing exposed another unload race on 2026-11-10. Settings PID 9897 exited with SIGSEGV after script unload. Its `x8` jump target was `0x90003408540006c0`; the fault address had the top byte removed. These eight bytes exactly match the original instructions at `libart.so` offsets `0x395650` and `0x395654`, inside `StackVisitor::WalkStack` on the tested ART build (`289d75599f6112d5757113220599e90b`).
+
+The arm64 inline redirect stores its trampoline address at that location. Restoring the original multi-instruction region while a managed thread executes the redirect can make the thread load instruction bytes as its branch address. Draining replacement JNI frames does not protect unrelated stack walks.
+
+The fork wraps global patch restoration in ART `SuspendAll` / `ResumeAll`. It restores the redirects and releases their trampolines while managed threads are suspended. The existing non-ART path is unchanged. This is a ten-line addition to `lib/android.js`; it preserves the earlier replacement-frame drain.
+
 ## Install the fork bridge
 
 Run these commands from the builder repository on the host:
@@ -42,7 +50,7 @@ npm ci --prefix tests/device
 For a separate script project, pin the fork commit and keep its lock file:
 
 ```sh
-npm install --save-exact https://codeload.github.com/LanceaKing/frida-java-bridge/tar.gz/70b66c7a60902b4f5c83f7a9f5e55c9c952bbf4e
+npm install --save-exact https://codeload.github.com/LanceaKing/frida-java-bridge/tar.gz/d36ddffe87558c23dc1c5b585028263b3fbabb33
 ```
 
 Recompile that project's scripts after installation. Clean installs retain the fix.
@@ -53,6 +61,7 @@ Keep the [official server startup](INSTALL.md#full-mode-android-app-connection).
 
 `TeardownWorkload.java` runs four Java threads independently of the Frida script.
 They repeatedly call `System.identityHashCode` through reflection and compare its return value with the original value.
+They also capture Java stack traces to exercise ART inline redirects during unload.
 The host unloads the hook while those threads run, observes process survival, and reads their final result.
 A unique output path prevents a previous run from supplying a false success.
 The runner fails on a JavaScript error, a changed return value, an early process exit, or a cleanup timeout.

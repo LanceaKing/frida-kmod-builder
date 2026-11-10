@@ -2,7 +2,7 @@
   "version": "17.26.2",
   "frida": {
     "repository": "https://github.com/LanceaKing/frida.git",
-    "commit": "e9fa011ac959bf24a1da3fc93824076fc971bb27",
+    "commit": "ce4513422e2584da5d233a8249ac1d565c4b4545",
     "upstream_commit": "d8e133aee7d0b99dd3c84bcdc3a5a26e5bc3dfc3"
   },
   "core": {
@@ -17,18 +17,18 @@
   "java_bridge": {
     "repository": "https://github.com/LanceaKing/frida-java-bridge.git",
     "version": "7.0.13",
-    "commit": "70b66c7a60902b4f5c83f7a9f5e55c9c952bbf4e",
-    "archive": "https://codeload.github.com/LanceaKing/frida-java-bridge/tar.gz/70b66c7a60902b4f5c83f7a9f5e55c9c952bbf4e"
+    "commit": "d36ddffe87558c23dc1c5b585028263b3fbabb33",
+    "archive": "https://codeload.github.com/LanceaKing/frida-java-bridge/tar.gz/d36ddffe87558c23dc1c5b585028263b3fbabb33"
   },
   "tools": {
     "repository": "https://github.com/LanceaKing/frida-tools.git",
-    "commit": "be4b2336f54bf10b3e1fb9e2afe54a69eb599a4b",
+    "commit": "86b3d4bb67bf43e8b6da67c1c20d1f5ca020f040",
     "upstream_commit": "6bbae44a5df871524619337130471871ccc386dd",
-    "wheel_url": "https://github.com/LanceaKing/frida/releases/download/17.26.2-pixel-5.10.1/frida_tools-14.13.1.dev1-py3-none-any.whl",
-    "wheel_sha256": "7eab05f6e7ee442cb35ca9fe032569035b78234bd22e90e335d9df3441f26078"
+    "wheel_url": "https://github.com/LanceaKing/frida/releases/download/17.26.2-pixel-5.10.2/frida_tools-14.13.1.dev2-py3-none-any.whl",
+    "wheel_sha256": "15e854ea1df4b86f951e4b3909111cc181ca36902f7043133596719d9a7527aa"
   },
   "server": {
-    "url": "https://github.com/LanceaKing/frida/releases/download/17.26.2-pixel-5.10.1/frida-server-17.26.2-android-arm64.xz",
+    "url": "https://github.com/LanceaKing/frida/releases/download/17.26.2-pixel-5.10.2/frida-server-17.26.2-android-arm64.xz",
     "sha256": "67ff232ec48d2b022b2ecfcd47e7da87c8012b22fc0524cd7d21abfdcdf7b187",
     "binary_sha256": "6b3a0a1fef0599a5fd762d49db6a982e146b0ac8cc5008d841fd69d6dc7552cf",
     "core_commit": "32e5a832a5fd837456f6341f53ec075925683925"
