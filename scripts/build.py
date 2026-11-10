@@ -2,6 +2,7 @@
 """Build the upstream Frida arm64 kernel module against a prepared kernel."""
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -28,6 +29,9 @@ DEFAULTS = {
     "android_ci_target": "kernel_aarch64",
     "prepare_url": "",
     "symvers_url": "",
+    "kernel_image_url": "",
+    "kernel_config_sha256": "",
+    "agent_mode": "full",
     "kernel_clang_url": "auto",
     "rust_toolchain": "1.99.1",
     "module_name": "frida-agent",
@@ -63,6 +67,7 @@ def configuration(values):
     require(re.fullmatch(r"[A-Za-z0-9_-]{1,48}", c["module_name"]), "Use a module name with letters, digits, _ or -.")
     require(re.fullmatch(r"(?:\d+\.\d+\.\d+|stable|nightly-\d{4}-\d{2}-\d{2})", c["rust_toolchain"]), "Use a Rust version, stable, or a dated nightly.")
     require(c["include_server"] in ("true", "false"), "include_server must be true or false.")
+    require(c["agent_mode"] in ("full", "kernel-only"), "agent_mode must be full or kernel-only.")
     https_url(c["kernel_repository"])
     family = re.match(r"(\d+\.\d+)\.\d+-?(android\d+)?", c["kernel_release"])
     require(family is not None, "The kernel release must start with major.minor.patch.")
@@ -76,18 +81,25 @@ def configuration(values):
     require(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_./+-]*", c["kernel_ref"]), "Set kernel_ref when uname -r does not contain a Git commit.")
     require(re.fullmatch(r"[A-Za-z0-9_-]+", c["android_ci_target"]), "Invalid Android CI target.")
     require(not c["android_ci_build"] or c["android_ci_build"].isdigit(), "Android CI build must contain digits only.")
-    for key in ("prepare_url", "symvers_url"):
+    for key in ("prepare_url", "symvers_url", "kernel_image_url"):
         if c[key]:
             https_url(c[key])
-    require(bool(c["prepare_url"]) == bool(c["symvers_url"]), "Provide both prepare_url and symvers_url, or leave both empty.")
-    if not c["prepare_url"]:
+    if c["kernel_image_url"]:
+        require(not c["prepare_url"] and c["symvers_url"],
+                "Image preparation requires symvers_url and an empty prepare_url.")
+        require(re.fullmatch(r"[0-9a-f]{64}", c["kernel_config_sha256"]),
+                "Image preparation requires the SHA256 of the target kernel configuration.")
+    else:
+        require(not c["kernel_config_sha256"], "kernel_config_sha256 requires kernel_image_url.")
+        require(bool(c["prepare_url"]) == bool(c["symvers_url"]), "Provide both prepare_url and symvers_url, or leave both empty.")
+    if not c["prepare_url"] and not c["kernel_image_url"]:
         require(c["android_ci_build"], "Provide an Android CI build or both custom artifact URLs.")
         base = f"https://ci.android.com/builds/submitted/{c['android_ci_build']}/{c['android_ci_target']}/latest/raw"
         c["prepare_url"] = base + "/modules_prepare_outdir.tar.gz"
         c["symvers_url"] = base + f"/{c['android_ci_target']}_Module.symvers"
     if c["kernel_clang_url"] not in ("auto", "system"):
         https_url(c["kernel_clang_url"])
-    c["artifact_name"] = f"{c['module_name']}-{c['frida_version']}-{c['kernel_release']}"
+    c["artifact_name"] = f"{c['module_name']}-{c['frida_version']}-{c['kernel_release']}-{c['agent_mode']}"
     return c
 
 
@@ -101,7 +113,10 @@ def write_json(path, value):
 
 def sha256(path):
     with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        digest = hashlib.sha256()
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+        return digest.hexdigest()
 
 
 def download(url, path):
@@ -111,7 +126,14 @@ def download(url, path):
     require(path.stat().st_size > 0, f"Downloaded an empty file: {url}")
     records = WORK / "downloads.json"
     entries = read_json(records) if records.exists() else []
-    entries.append({"url": url, "file": path.name, "sha256": sha256(path)})
+    record = {"url": url, "file": path.name, "sha256": sha256(path)}
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.hostname == "android.googlesource.com" and urllib.parse.parse_qs(parsed.query).get("format") == ["TEXT"]:
+        record["transport_sha256"] = record["sha256"]
+        path.write_bytes(base64.b64decode(path.read_bytes(), validate=True))
+        record["sha256"] = sha256(path)
+        record["encoding"] = "base64"
+    entries.append(record)
     write_json(records, entries)
 
 
@@ -165,39 +187,18 @@ def inspect_source(directory, release, commit):
             "The source kernel version does not match kernel_release.")
 
 
-def prepare():
-    c = read_json(WORK / "configuration.json")
-    prepared = WORK / "kernel-prepared"
-    download(c["prepare_url"], WORK / "kernel-prepared.tar.gz")
-    extract(WORK / "kernel-prepared.tar.gz", prepared)
-    download(c["symvers_url"], prepared / "Module.symvers")
-    options = inspect_kernel(prepared, c["kernel_release"])
-    write_json(WORK / "kernel-options.json", options)
+def config_options(text):
+    return dict(re.findall(r"^(CONFIG_\w+)=(.*)$", text, re.MULTILINE))
 
-    repository = c["kernel_repository"].rstrip("/")
-    ref = c["kernel_ref"]
-    if urllib.parse.urlsplit(repository).hostname == "android.googlesource.com":
-        url = f"{repository}/+/{urllib.parse.quote(ref, safe='/')}?format=JSON"
-        with urllib.request.urlopen(url, timeout=60) as response:
-            ref = json.loads(response.read().decode()[4:])["commit"]
-    kernel_commit = git_checkout(repository, ref, WORK / "kernel-source")
-    inspect_source(WORK / "kernel-source", c["kernel_release"], kernel_commit)
 
-    # The prepared Makefile can refer to the original CI workspace.
-    # Passing KDIR and KOUT to upstream kbuild rewrites this stub for this runner.
-    frida_commit = git_checkout("https://github.com/frida/frida-core.git", c["frida_version"], WORK / "frida-core")
-    patches = []
-    for patch in sorted((ROOT / "patches" / c["frida_version"]).glob("*.patch")):
-        run("git", "apply", "--check", patch, cwd=WORK / "frida-core")
-        run("git", "apply", patch, cwd=WORK / "frida-core")
-        patches.append({"path": str(patch.relative_to(ROOT)), "sha256": sha256(patch)})
-    run("git", "submodule", "update", "--init", "--recursive", "--depth=1", "releng", cwd=WORK / "frida-core")
-    base = f"https://github.com/frida/frida/releases/download/{c['frida_version']}"
-    devkit = f"frida-gumjs-devkit-{c['frida_version']}-none-arm64-softfloat_nopic.tar.xz"
-    download(f"{base}/{devkit}", WORK / "gumjs-devkit.tar.xz")
-    extract(WORK / "gumjs-devkit.tar.xz", WORK / "gumjs-devkit")
-    run(sys.executable, "releng/deps.py", "sync", "sdk", "none-arm64-softfloat_nopic", WORK / "sdk", cwd=WORK / "frida-core")
+def verify_config_unchanged(before, after):
+    old, new = config_options(before), config_options(after)
+    changes = {key: [old.get(key), new.get(key)] for key in old.keys() | new.keys()
+               if old.get(key) != new.get(key)}
+    require(not changes, f"Kernel preparation changed configuration options: {changes}")
 
+
+def prepare_compiler(c, options):
     clang_url = c["kernel_clang_url"]
     if clang_url == "auto":
         revision = re.search(r"based on (r[0-9]+[a-z0-9]*)", options.get("CONFIG_CC_VERSION_TEXT", ""))
@@ -212,9 +213,111 @@ def prepare():
         require((clang_bin / "clang").is_file(), "The compiler archive must contain bin/clang at its root.")
     else:
         clang_bin = Path("/usr/lib/llvm-19/bin")
+    return clang_url, clang_bin
+
+
+def prepare_from_image(c, prepared):
+    source = WORK / "kernel-source"
+    image = WORK / "kernel-image"
+    download(c["kernel_image_url"], image)
+    env = dict(os.environ, LC_ALL="C")
+    original = run("bash", source / "scripts/extract-ikconfig", image, env=env, capture=True)
+    require(hashlib.sha256(original.encode()).hexdigest() == c["kernel_config_sha256"],
+            "The image's embedded configuration does not match the target configuration SHA256.")
+    require(c["kernel_release"].encode() in image.read_bytes() or
+            c["kernel_image_url"].split("?")[0].endswith(".lz4"),
+            "The kernel image does not contain the expected release string.")
+    # Check the banner in an LZ4 image as well as its embedded configuration.
+    if c["kernel_image_url"].split("?")[0].endswith(".lz4"):
+        run("lz4", "-d", "-f", image, WORK / "kernel-image.raw")
+        require(b"Linux version " + c["kernel_release"].encode() + b" " in
+                (WORK / "kernel-image.raw").read_bytes(), "The kernel image release does not match kernel_release.")
+    (prepared / "original.config").write_text(original)
+    clang_url, clang_bin = prepare_compiler(c, config_options(original))
+    # Android 5.10 treats LLVM as a boolean and finds these tools through PATH.
+    env["PATH"] = str(clang_bin) + os.pathsep + env["PATH"]
+
+    # This old absolute build path is not part of the ABI. Recreate the whitelist
+    # from the original exported-symbol table; do not change any kernel feature.
+    normalized = original
+    relocations = {}
+    options = config_options(original)
+    key = "CONFIG_UNUSED_KSYMS_WHITELIST"
+    if options.get(key, '""') != '""':
+        whitelist = prepared / "abi_symbollist.raw"
+        symbols = [line.split()[1] for line in (prepared / "Module.symvers").read_text().splitlines() if line.strip()]
+        whitelist.write_text("\n".join(sorted(set(symbols))) + "\n")
+        value = f'"{whitelist}"'
+        normalized = normalized.replace(f"{key}={options[key]}", f"{key}={value}")
+        relocations[key] = {"original": options[key], "prepared": value}
+    (prepared / ".config").write_text(normalized)
+    # The exact source, image banner and config were checked above. Supply the
+    # original build's release to kbuild, including its Android CI build suffix.
+    make_args = ["make", "-C", source, f"O={prepared}", "ARCH=arm64",
+                 f"LLVM={clang_bin}/", "LLVM_IAS=1", "CROSS_COMPILE=aarch64-linux-gnu-",
+                 f"KERNELRELEASE={c['kernel_release']}"]
+    run(*make_args, "olddefconfig", env=env)
+    verify_config_unchanged(normalized, (prepared / ".config").read_text())
+    run(*make_args, f"-j{min(os.cpu_count() or 2, 8)}", "modules_prepare", env=env)
+    verify_config_unchanged(normalized, (prepared / ".config").read_text())
+    return clang_url, clang_bin, {
+        "method": "exact-source-and-image", "original_config_sha256": c["kernel_config_sha256"],
+        "image_sha256": sha256(image), "config_path_relocations": relocations,
+    }
+
+
+def prepare():
+    c = read_json(WORK / "configuration.json")
+    prepared = WORK / "kernel-prepared"
+    prepared.mkdir(parents=True, exist_ok=True)
+
+    repository = c["kernel_repository"].rstrip("/")
+    ref = c["kernel_ref"]
+    if urllib.parse.urlsplit(repository).hostname == "android.googlesource.com":
+        url = f"{repository}/+/{urllib.parse.quote(ref, safe='/')}?format=JSON"
+        with urllib.request.urlopen(url, timeout=60) as response:
+            ref = json.loads(response.read().decode()[4:])["commit"]
+    kernel_commit = git_checkout(repository, ref, WORK / "kernel-source")
+    inspect_source(WORK / "kernel-source", c["kernel_release"], kernel_commit)
+
+    if c["kernel_image_url"]:
+        download(c["symvers_url"], prepared / "Module.symvers")
+        clang_url, clang_bin, preparation = prepare_from_image(c, prepared)
+    else:
+        download(c["prepare_url"], WORK / "kernel-prepared.tar.gz")
+        extract(WORK / "kernel-prepared.tar.gz", prepared)
+        download(c["symvers_url"], prepared / "Module.symvers")
+        options = inspect_kernel(prepared, c["kernel_release"])
+        clang_url, clang_bin = prepare_compiler(c, options)
+        preparation = {"method": "prepared-artifact"}
+    options = inspect_kernel(prepared, c["kernel_release"])
+    write_json(WORK / "kernel-options.json", options)
+
+    # The prepared Makefile can refer to the original CI workspace.
+    # Passing KDIR and KOUT to upstream kbuild rewrites this stub for this runner.
+    frida_commit = git_checkout("https://github.com/frida/frida-core.git", c["frida_version"], WORK / "frida-core")
+    patches = []
+    patch_dir = ROOT / "patches" / c["frida_version"]
+    selected_patches = sorted(patch_dir.glob("*.patch"))
+    if c["agent_mode"] == "kernel-only":
+        mode_patches = sorted((patch_dir / "kernel-only").glob("*.patch"))
+        require(mode_patches, "No kernel-only compatibility patch exists for this Frida version.")
+        selected_patches += mode_patches
+    for patch in selected_patches:
+        run("git", "apply", "--check", patch, cwd=WORK / "frida-core")
+        run("git", "apply", patch, cwd=WORK / "frida-core")
+        patches.append({"path": str(patch.relative_to(ROOT)), "sha256": sha256(patch)})
+    run("git", "submodule", "update", "--init", "--recursive", "--depth=1", "releng", cwd=WORK / "frida-core")
+    base = f"https://github.com/frida/frida/releases/download/{c['frida_version']}"
+    devkit = f"frida-gumjs-devkit-{c['frida_version']}-none-arm64-softfloat_nopic.tar.xz"
+    download(f"{base}/{devkit}", WORK / "gumjs-devkit.tar.xz")
+    extract(WORK / "gumjs-devkit.tar.xz", WORK / "gumjs-devkit")
+    run(sys.executable, "releng/deps.py", "sync", "sdk", "none-arm64-softfloat_nopic", WORK / "sdk", cwd=WORK / "frida-core")
+
     write_json(WORK / "sources.json", {
         "kernel_commit": kernel_commit, "frida_commit": frida_commit,
         "frida_patches": patches,
+        "kernel_preparation": preparation,
         "releng_commit": run("git", "rev-parse", "HEAD", cwd=WORK / "frida-core/releng", capture=True).strip(),
         "kernel_clang_url": clang_url, "kernel_clang_bin": str(clang_bin),
         "kernel_config_sha256": sha256(prepared / ".config"),
@@ -233,6 +336,12 @@ def build():
                 "FRIDA_VERSION": c["frida_version"]})
     run("rustup", "toolchain", "install", c["rust_toolchain"], "--profile", "minimal", "--component", "rust-src", "--target", "aarch64-unknown-none")
     clang_bin = sources["kernel_clang_bin"]
+    env["PATH"] = clang_bin + os.pathsep + env["PATH"]
+    extra_args = []
+    if c["kernel_image_url"]:
+        extra_args += [f"KERNELRELEASE={c['kernel_release']}", "LLVM_IAS=1", "CROSS_COMPILE=aarch64-linux-gnu-"]
+    if c["agent_mode"] == "kernel-only":
+        extra_args += ["EXTRA_CFLAGS=-DFRIDA_KERNEL_ONLY"]
     run("make", "-C", WORK / "frida-core/src/barebone/agent/linux",
         f"-j{min(os.cpu_count() or 2, 8)}", "ARCH=arm64", "BITS=64",
         f"MODULE_NAME={c['module_name']}", f"FRIDA_SDK={WORK / 'sdk'}",
@@ -240,7 +349,7 @@ def build():
         "AGENT_LD=aarch64-linux-gnu-ld", "AGENT_AR=aarch64-linux-gnu-ar",
         "AGENT_NM=aarch64-linux-gnu-nm", "AGENT_OBJCOPY=aarch64-linux-gnu-objcopy",
         f"KDIR={WORK / 'kernel-source'}", f"KOUT={WORK / 'kernel-prepared'}",
-        f"LLVM={clang_bin}/", env=env)
+        f"LLVM={clang_bin}/", *extra_args, env=env)
     # Recheck after kbuild: configuration regeneration must not change the target ABI.
     inspect_kernel(WORK / "kernel-prepared", c["kernel_release"])
     require(sha256(WORK / "kernel-prepared/.config") == sources["kernel_config_sha256"],
@@ -259,6 +368,11 @@ def package():
     require("AArch64" in elf and "REL (Relocatable file)" in elf, "The output must be an AArch64 relocatable ELF module.")
     shutil.copy2(WORK / "frida-core/src/barebone/agent/etc/linux-kmod.json", DIST / "linux-kmod.json")
     shutil.copy2(ROOT / "docs/INSTALL.md", DIST / "INSTALL.md")
+    if c["agent_mode"] == "kernel-only":
+        note = ("This is a kernel-session-only build. Connect with `-p 0`.\n"
+                "Process thread injection returns EOPNOTSUPP. Automatic process hooks are disabled.\n\n")
+        install = DIST / "INSTALL.md"
+        install.write_text(note + install.read_text())
     shutil.copy2(ROOT / "THIRD_PARTY_NOTICES.md", DIST / "THIRD_PARTY_NOTICES.md")
     shutil.copy2(WORK / "frida-core/COPYING", DIST / "LICENSE.frida-core")
     shutil.copy2(WORK / "kernel-source/COPYING", DIST / "LICENSE.kernel")
@@ -281,6 +395,8 @@ def package():
         "rust_compiler": run("rustup", "run", c["rust_toolchain"], "rustc", "--version", capture=True).strip(),
         "builder_commit": os.environ.get("GITHUB_SHA", "local"),
         "run_url": f"https://github.com/{os.environ.get('GITHUB_REPOSITORY', '')}/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}",
+        "features": {"kernel_session": True, "process_thread_injection": c["agent_mode"] == "full",
+                     "automatic_process_hooks": c["agent_mode"] == "full"},
         "validation": {"elf": "AArch64 relocatable", "vermagic": "matched", "device_load_test": "not performed"},
     }
     write_json(DIST / "build-info.json", provenance)

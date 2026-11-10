@@ -12,3 +12,8 @@ It does not change the target kernel configuration.
 
 The patch modifies Frida source and retains its upstream license.
 New Frida releases receive no patch unless a corresponding directory exists here.
+
+With `agent_mode=kernel-only`, the builder also applies `17.26.2/kernel-only/0002-kernel-session-only.patch` and defines `FRIDA_KERNEL_ONLY`.
+This excludes process thread creation and reparenting, which use newer fields and interfaces absent from Android 13 Linux 5.10.
+Thread injection returns `-EOPNOTSUPP`. The automatic process-hook installer returns without creating a worker or installing hooks.
+Kernel sessions through `/dev/frida` remain enabled. This patch does not change the kernel configuration.

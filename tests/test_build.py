@@ -33,6 +33,40 @@ class ConfigurationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "family"):
             builder.configuration({"kernel_family": "android13-5.10"})
 
+    def test_image_preparation_requires_config_hash_and_symbols(self):
+        values = {"kernel_image_url": "https://example.com/Image.lz4"}
+        with self.assertRaisesRegex(ValueError, "symvers_url"):
+            builder.configuration(values)
+        values["symvers_url"] = "https://example.com/vmlinux.symvers"
+        with self.assertRaisesRegex(ValueError, "SHA256"):
+            builder.configuration(values)
+        values["kernel_config_sha256"] = "a" * 64
+        result = builder.configuration(values)
+        self.assertEqual(result["prepare_url"], "")
+
+    def test_kernel_only_mode_is_explicit(self):
+        result = builder.configuration({"agent_mode": "kernel-only"})
+        self.assertTrue(result["artifact_name"].endswith("-kernel-only"))
+        with self.assertRaisesRegex(ValueError, "agent_mode"):
+            builder.configuration({"agent_mode": "partial"})
+
+    def test_image_and_prepared_archive_are_mutually_exclusive(self):
+        with self.assertRaisesRegex(ValueError, "empty prepare_url"):
+            builder.configuration({"kernel_image_url": "https://example.com/Image",
+                                   "prepare_url": "https://example.com/tree.tar.gz",
+                                   "symvers_url": "https://example.com/Module.symvers"})
+
+
+class ConfigPreservationTests(unittest.TestCase):
+    def test_ignores_header_and_disabled_option_formatting(self):
+        builder.verify_config_unchanged("# old\nCONFIG_CFI_CLANG=y\n# CONFIG_FOO is not set\n",
+                                        "# new\nCONFIG_CFI_CLANG=y\n")
+
+    def test_rejects_abi_changes(self):
+        for key in ("CFI_CLANG", "LTO_CLANG_FULL", "MODVERSIONS", "ARM64_4K_PAGES"):
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, key):
+                builder.verify_config_unchanged(f"CONFIG_{key}=y\n", f"# CONFIG_{key} is not set\n")
+
     def test_rejects_shell_payloads_and_options(self):
         for key, value in (("module_name", "a;id"), ("kernel_ref", "--upload-pack=id"),
                            ("kernel_release", "6.1.0$(id)"), ("rust_toolchain", "stable\nid")):

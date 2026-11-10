@@ -38,6 +38,9 @@ For a vendor kernel, provide its exact source revision and prepared artifacts.
 | `android_ci_target` | Android CI target. Default: `kernel_aarch64`. |
 | `prepare_url` | Public HTTPS URL for a prepared kernel archive. Set with `symvers_url`. |
 | `symvers_url` | Public HTTPS URL for `Module.symvers` from the same build. |
+| `kernel_image_url` | Original `Image` or `Image.lz4` URL for rebuilding an expired prepared tree. Set with `symvers_url`; leave `prepare_url` empty. |
+| `kernel_config_sha256` | SHA256 of the decompressed device configuration. Required in image preparation mode. |
+| `agent_mode` | `full` or `kernel-only`. The latter supports PID 0 sessions and disables process injection and automatic process hooks. |
 | `kernel_clang_url` | `auto`, `system`, or an HTTPS compiler archive URL. See below. |
 | `rust_toolchain` | Rust version or dated nightly for the agent. Default: `1.99.1`. |
 | `module_name` | Output name without `.ko`. Default: `frida-agent`. |
@@ -71,6 +74,16 @@ The archive must contain `bin/clang` at its root.
 Use it only when LLVM 19 is suitable for the target kernel.
 The build fails if kbuild changes the supplied `.config` or the output version string differs.
 The workflow does not change CFI, page size, module signatures, or symbol-version checks to make a build pass.
+
+When Android CI artifacts have expired, image preparation can restore the generated headers from the exact source, original kernel image, embedded configuration, and original symbol CRC table.
+The builder verifies the image banner, configuration hash, and source commit before running `olddefconfig` and `modules_prepare`.
+It relocates `CONFIG_UNUSED_KSYMS_WHITELIST` to a runner-local path and rejects any other option change.
+Gitiles blob URLs ending in `?format=TEXT` are decoded from base64 automatically.
+The [Pixel 7a Android 13 preset](presets/pixel-7a-android13-5.10.json) uses this path for build `10208116`.
+
+Frida 17.26.2 process thread injection requires interfaces absent from this Linux 5.10 build.
+Use `agent_mode=kernel-only` for this preset and connect with `-p 0`.
+This mode does not install Frida's automatic process hooks. It returns `EOPNOTSUPP` for process thread injection.
 
 ## Output and installation
 

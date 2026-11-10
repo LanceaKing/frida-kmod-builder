@@ -33,6 +33,17 @@ adb shell uname -r
 `system` 使用 LLVM 19，仅适用于兼容该编译器的目标。
 Frida agent 部分独立使用 LLVM 19，以满足 soft-float 构建要求。
 
+## 已过期的 Android CI 构建
+
+如果准备包已过期，可提供原始 `Image` 或 `Image.lz4` 的 `kernel_image_url`、同次构建的 `symvers_url`，以及设备解压后配置的 `kernel_config_sha256`，并留空 `prepare_url`。
+构建器会核对镜像版本、配置哈希和源码提交，再运行 `olddefconfig` 与 `modules_prepare` 恢复生成文件。
+只允许迁移 `CONFIG_UNUSED_KSYMS_WHITELIST` 的文件路径；其他配置变化会使构建失败。
+
+[Pixel 7a Android 13 参数](../presets/pixel-7a-android13-5.10.json)对应构建号 `10208116`。
+该版本的官方镜像配置与实测设备配置一致。
+Linux 5.10 缺少新版 Frida 的进程线程注入接口，因此该预设选择 `agent_mode=kernel-only`。
+连接时使用 `-p 0`。进程线程注入返回 `EOPNOTSUPP`，自动进程 hook 关闭。
+
 ## 调整其他参数
 
 `frida_version` 同时选择源码、GumJS devkit 和 server 的版本。
