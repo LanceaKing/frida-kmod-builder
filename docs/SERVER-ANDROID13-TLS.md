@@ -68,7 +68,8 @@ Module allocation, writes, target thread creation, and agent messages confirmed 
 
 The current server adds the connection cleanup patch to the TLS correction. The SELinux helper and injector entrypoints are unchanged.
 Extended tests confirm that the pending-listener leak is fixed across 20 target exits and that other Apps reach both hooks.
-However, crash logs show unresolved Settings and Calculator failures after Java hook unload.
-Later bounded controls did not reproduce those failures. Device acceptance remains incomplete, and the PR remains a draft.
+The later Settings and Calculator unload crashes required a separate [Java bridge lifetime correction](JAVA-TEARDOWN.md).
+The final device matrix passed with that bridge patch and this unchanged server binary.
+Apply the bridge patch to each script project. Neither server patch changes the Java bridge bundled into user scripts.
 Follow the [direct startup commands](INSTALL.md#full-mode-android-app-connection), using port 27043 for Apps and port 27042 for Barebone PID 0.
 See the [full-mode acceptance record](PIXEL-5.10-FULL.md) for the kernel regression, policy hashes, resource observations, and remaining scope limits.

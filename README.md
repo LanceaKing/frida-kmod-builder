@@ -90,7 +90,8 @@ The [Pixel 7a Android 13 preset](presets/pixel-7a-android13-5.10.json) uses this
 The original [kernel-only preset](presets/pixel-7a-android13-5.10.json) remains available for `-p 0` sessions.
 It does not install automatic process hooks and returns `EOPNOTSUPP` for process thread creation.
 The separate [full preset](presets/pixel-7a-android13-5.10-full.json) adds a compatibility backport for this exact kernel and Frida 17.26.2.
-It remains experimental. Extended App tests found unresolved crashes after Java hook unload, so device acceptance is incomplete.
+It remains experimental. The pinned device passed the bounded regression matrix with the server patches and the separate [Java bridge teardown patch](docs/JAVA-TEARDOWN.md).
+Apply that bridge patch in each script project and recompile its Java scripts. The server rebuild alone does not contain this correction.
 The [patched server](docs/SERVER-ANDROID13-TLS.md) corrects TLS capacity and a connection leak during failed injection.
 Read the [acceptance record](docs/PIXEL-5.10-FULL.md) before loading it.
 Other 5.10 kernels and 32-bit Apps are outside the reviewed scope.

@@ -1,13 +1,14 @@
 # Pixel 7a full-mode acceptance record
 
-Status: **experimental; extended App teardown acceptance failed**. The PR remains a draft.
+Status: **experimental; bounded regression passed on the pinned device with the server and Java bridge patches**.
 
 Revision `0bae5f8` passes the process probe, normal module reload, and a minimal kernel JavaScript session on the target device.
 The rebuilt server fixes the observed synthetic Bionic TLS capacity error.
-Direct server startup restores official SELinux initialization. Callback and injection checks pass, but later App tests exposed crashes after Java hook unload.
+Direct server startup restores official SELinux initialization. The separate [Java bridge patch](JAVA-TEARDOWN.md) corrects premature callback release during script unload.
+Apply that patch in the script project and recompile its Java scripts. The server rebuild does not include this client-side dependency correction.
 
 The scope is arm64 Apps, Frida 17.26.2, and kernel `5.10.157-android13-4-00003-g776d0a76f6aa-ab10208116` from source `776d0a76f6aa7c5a92c60afbe886a8e786953199`.
-The backport keeps the official prctl ABI. The latest device test uses a server with the scoped Android TLS patch.
+The backport keeps the official prctl ABI. The latest device test uses the TLS and connection-cleanup server patches plus the Java bridge patch.
 Barebone port 27042 serves kernel sessions. Android port 27043 serves App sessions through `KernelInjectSession`.
 
 ## Build and first device attempt
@@ -183,13 +184,13 @@ The final crash-log review invalidated full acceptance despite those successful 
 Settings spawn PID 24997 reported SIGSEGV. Calculator recovery PIDs 27544, 29324, and 30356 also crashed after hook unload.
 The Calculator tombstones all enter the old Java `identityHashCode()` callback from ART's generic JNI trampoline.
 They resolve to `gum_quick_value_from_ffi()` at agent offset `0xe81188`, called by `gum_quick_native_callback_invoke()`.
-The faulting instruction reads an invalid FFI field-type pointer. Callback lifetime or stale method dispatch remains under investigation.
+The faulting instruction reads an invalid FFI field-type pointer. At that stage, callback lifetime and stale method dispatch were unresolved.
 This is not the earlier Bionic TLS fault, and it is not a kernel panic.
 
 The App runner now observes survival for three seconds after detach, before terminating a spawned target, and exits nonzero on cleanup failure.
 Ten fresh Calculator runs without the module and ten after restoring it passed this stronger check.
 Those bounded controls did not reproduce the crash. They do not explain or resolve the recorded failures, or establish which backend caused them.
-The readiness gate therefore remains failed. Do not replace it with callback-only success.
+The readiness gate therefore remained failed at that stage. The final teardown regression below supersedes that status.
 
 The control experiment used normal module removal and restored the same artifact afterward.
 This brings same-boot lifecycle evidence to four loads and three normal unloads, with no forced unload or kernel fault.
@@ -200,6 +201,25 @@ Both direct servers are running again on loopback ports 27042 and 27043. No prob
 Evidence is stored locally in `.work/extended-validation-20261110/`, including the pre-fix leak, corrected tests, controls, and three Calculator tombstones.
 The crash and device logs are not committed. Other kernels, 32-bit Apps, exhaustive interleavings, and long-duration stress remain outside the tested scope.
 
+## Final Java teardown regression
+
+A diagnostic build later caught a `NativeCallback` release while a caller waited for the JavaScript lock.
+The [bridge lifetime patch and reproduction record](JAVA-TEARDOWN.md) document the failure and the two-stage cleanup.
+The patch retains replacement callbacks and cloned ART methods until no ART frame references them.
+The official server entrypoints, SELinux helper, kernel module, and prctl protocol remain unchanged.
+
+The final non-diagnostic matrix passed 50 concurrent unloads, 40 repeated attach sessions, 42 spawns, and three cancellations before resume.
+It also passed 20 injection/exit races and 20 fresh-process recoveries, each with the stronger post-detach survival check.
+The maximum failed-injection duration was 10.48 seconds. No bootstrap listener remained after any attempt.
+Invalid/exited PID handling, target termination, and the Barebone PID 0 session passed.
+
+The final crash-buffer and tombstone comparison found no new crash.
+The kernel log contained no new warning, Oops, or panic. Root, boot ID, global Enforcing state, and the policy hash remained unchanged.
+Both direct server entrypoints remained running with the existing server SHA256 `77eecc8c7145793cd162bef0cfdca5ce0e044c46782935a51a09c8d91800b813`.
+Evidence and source hashes are in `.work/teardown-acceptance-20261110/summary.json` and `provenance.json`.
+Earlier diagnostic and interrupted candidate runs are excluded from this final count.
+Standalone hook removal in a running script, other ART builds, 32-bit Apps, and exhaustive interleavings remain outside this result.
+
 | Acceptance stage | Result |
 | --- | --- |
 | Shared and mode-specific patches apply | Passed for both modes |
@@ -209,10 +229,11 @@ The crash and device logs are not committed. Other kernels, 32-bit Apps, exhaust
 | Current full startup and normal reload | Four loads and three normal unloads passed |
 | Alloc/read/write/free and user-thread probe | Passed |
 | Rebuilt server TLS capacity | Built and verified; original crash did not recur |
-| Native and Java hooks in four Apps | Callbacks observed; post-unload crashes prevent full acceptance |
-| Spawn and cancellation | API operations complete; Settings post-unload SIGSEGV remains unresolved |
-| Ten attach/unload/detach cycles | Completed in each additional App; survival checks now required |
-| Concurrent injection/exit | 20 bounded aborts with no listener leak; three recovery targets later crashed |
+| Native and Java hooks in four Apps | Passed with the bridge patch and post-detach survival checks |
+| Spawn and cancellation | 42 spawns and three cancellations passed with the bridge patch |
+| Ten attach/unload/detach cycles | Passed in each of four Apps, with survival checks |
+| Concurrent injection/exit | Final 20 bounded aborts and fresh-process recoveries passed without a new crash |
+| Concurrent Java hook unload | Final 50 four-thread rounds passed |
 | Invalid PID and target exit | Process probes and active-session termination passed |
 | Server restart and reconnect | Passed for kernel and App entrypoints |
 | Kernel injection trace plus agent connection | Matching allocation, write, bootstrap TID, and script messages observed |

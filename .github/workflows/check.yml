@@ -13,5 +13,11 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 -m unittest discover -s tests -v
-      - run: python3 -m py_compile scripts/build.py tests/device/app-session.py tests/device/app-exit-race.py
+      - run: python3 -m py_compile scripts/build.py tests/device/app-session.py tests/device/app-exit-race.py tests/device/teardown-session.py
       - run: cc -Wall -Wextra -Werror -fsyntax-only tests/device/exit-on-injection.c
+      - run: npm ci --prefix tests/device
+      - run: patch -p1 -d tests/device/node_modules/frida-java-bridge < patches/frida-java-bridge/7.0.13/0001-drain-art-replacements-on-unload.patch
+      - run: |
+          node --check tests/device/node_modules/frida-java-bridge/index.js
+          node --check tests/device/node_modules/frida-java-bridge/lib/android.js
+          node --check tests/device/node_modules/frida-java-bridge/lib/class-factory.js

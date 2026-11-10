@@ -72,6 +72,7 @@ try:
                         time.sleep(0.1)
                     record['counts'] = script.exports_sync.counts()
                     assert record['counts']['native'] > 0 and record['counts']['java'] > 0, record
+                    assert not any(item['message']['type'] == 'error' for item in record['messages']), record
                 record['ok'] = True
         except Exception as error:
             record['ok'] = False
@@ -86,9 +87,12 @@ try:
             try:
                 with cleanup:
                     if script is not None:
+                        record['unload_started_at'] = time.time()
                         script.unload()
+                        record['unload_finished_at'] = time.time()
                     if session is not None:
                         session.detach()
+                        record['detached_at'] = time.time()
                     if pid is not None and not a.cancel_spawn:
                         deadline = time.monotonic() + a.post_detach_seconds
                         while time.monotonic() < deadline:

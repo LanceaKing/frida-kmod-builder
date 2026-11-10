@@ -13,6 +13,10 @@ It does not change the target kernel configuration.
 The patch modifies Frida source and retains its upstream license.
 New Frida releases receive no patch unless a corresponding directory exists here.
 
+The separate `frida-java-bridge/7.0.13/` patch controls Java callback lifetime during script unload on the pinned Android 13 device.
+Apply it to the script project's npm dependency, then recompile the scripts.
+The kernel builder and server patches do not apply it. See the [teardown instructions and regression test](../docs/JAVA-TEARDOWN.md).
+
 With `agent_mode=kernel-only`, the builder also applies `17.26.2/kernel-only/0002-kernel-session-only.patch` and defines `FRIDA_KERNEL_ONLY`.
 This excludes process thread creation and reparenting, which use newer fields and interfaces absent from Android 13 Linux 5.10.
 Thread injection returns `-EOPNOTSUPP`. The automatic process-hook installer returns without creating a worker or installing hooks.
