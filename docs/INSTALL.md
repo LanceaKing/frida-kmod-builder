@@ -2,8 +2,8 @@
 
 Do not reload the original Pixel 7a Android 13 artifact after a panic.
 Builds from `d5f6682` and earlier contain an ELF flag that can make mutable memory read-only.
-The revised build removes that flag, but runtime validation remains incomplete.
-Read the [incident report](https://github.com/LanceaKing/frida-kmod-builder/blob/main/docs/PIXEL-5.10-PANIC.md) first.
+The revised build removes that flag. Later full-mode tests passed on the pinned device.
+Read the [incident report](PIXEL-5.10-PANIC.md) and [current acceptance record](PIXEL-5.10-FULL.md) first.
 
 Use a rooted Android arm64 device with the exact kernel recorded in `build-info.json`.
 KernelSU can provide root access, including in its runtime jailbreak mode.
@@ -15,6 +15,7 @@ A completed Actions build does not prove that this module works on your device.
 Run these commands on the computer connected to the device.
 Replace `frida-agent.ko` if you selected a different module name.
 If the artifact does not include `frida-server`, obtain the matching Android arm64 release from Frida.
+For Pixel 7a Android 13 full-mode App injection, use the [TLS-corrected server](SERVER-ANDROID13-TLS.md) instead.
 
 ```sh
 shasum -a 256 -c SHA256SUMS
@@ -82,22 +83,23 @@ For upstream details, read the [Frida Linux module guide](https://github.com/fri
 The Pixel 7a full preset is experimental. Check [its acceptance record](PIXEL-5.10-FULL.md) first.
 Revision `0bae5f8` passes a minimal kernel session and normal reload on the pinned device.
 The unchanged Frida 17.26.2 server crashes during App attach because its synthetic Bionic TLS area is too small.
-The [rebuilt Android server](SERVER-ANDROID13-TLS.md) corrects that capacity error, but App injection still stops at a SELinux agent-file denial.
-Do not treat the App commands below as a passed installation procedure for this target.
+The [rebuilt Android server](SERVER-ANDROID13-TLS.md) corrects that capacity error.
+With official server startup, Calculator Native/Java hooks, ten attach cycles, spawn, and cancellation passed on this device.
 Barebone remains on port 27042 for `-p 0`. App injection uses a second, ordinary Android server on port 27043.
 Both use the Android arm64 server for Frida 17.26.2. The latest validation uses the documented TLS rebuild.
 
-The Android server normally patches SELinux policy at startup, including in Barebone mode.
-For a test that must preserve the current policy, compile `tests/device/server-no-policy.c` with an Android arm64 NDK compiler and push the resulting executable to `/data/local/tmp/`.
-The launcher creates a private mount namespace and masks the policy file with `/dev/null`.
-The server's policy parser then returns before any policy write. The global policy remains visible to other processes.
-Record the global policy SHA256 and enforcing state before and after testing.
+Start the server directly as root. Its official Android startup code patches the live SELinux policy, including in Barebone mode.
+It creates `frida_file` and `frida_memfd` and adds the access rules used by its injector.
+The injector then labels the agent file or memfd. No extra policy patch or manual file relabeling is needed for this tested device.
+The earlier `server-no-policy` launcher prevented this setup and caused the agent-file denial. It has been removed.
+The official helper can temporarily disable enforcement and make the shell domain permissive if its first policy write fails.
+Record the policy hash and global enforcing state before and after startup. Stopping the server does not undo the live policy change.
 
 Start each server in a separate terminal:
 
 ```sh
-adb shell "su -c 'FRIDA_BAREBONE_CONFIG=/data/local/tmp/linux-kmod.json /data/local/tmp/server-no-policy /data/local/tmp/frida-server --device=barebone -l 127.0.0.1:27042'"
-adb shell "su -c '/data/local/tmp/server-no-policy /data/local/tmp/frida-server -l 127.0.0.1:27043'"
+adb shell "su -c 'FRIDA_BAREBONE_CONFIG=/data/local/tmp/linux-kmod.json /data/local/tmp/frida-server --device=barebone -l 127.0.0.1:27042'"
+adb shell "su -c '/data/local/tmp/frida-server -l 127.0.0.1:27043'"
 adb forward tcp:27042 tcp:27042
 adb forward tcp:27043 tcp:27043
 frida -H 127.0.0.1:27042 -p 0

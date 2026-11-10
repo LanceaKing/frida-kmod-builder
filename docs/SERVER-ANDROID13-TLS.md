@@ -44,21 +44,16 @@ The server built successfully with SHA256 `e43099154b1532f689fa6929089a506ac5366
 The phone reported version 17.26.2 and the same SHA256.
 The generated C source uses 64 KiB for allocation, range registration, and release.
 
-Calculator attach no longer reproduced the earlier Bionic TLS crash. The process remained alive after the failed attach.
-The loader reached agent file transfer, where SELinux denied `read write` on `memfd:frida-agent-64.so`.
-The file had type `tmpfs`, and the target thread retained the Calculator App's `untrusted_app` context.
-The host reported `TransportError: error sending data: Broken pipe`.
-Agent startup, Native hooks, Java hooks, and App spawn remain unaccepted.
+The first TLS-corrected test used a launcher that masked SELinux policy reads.
+The TLS crash did not recur, but agent transfer failed with a `tmpfs` memfd access denial and a broken pipe.
+That launcher prevented the official server from installing its SELinux types and rules.
 
-The rebuilt server also passed a minimal Barebone kernel JavaScript session on port 27042.
-No new kernel warning, Oops, panic, device reboot, or Calculator crash appeared in this validation.
-Root remained available. Global SELinux stayed Enforcing, and the policy hash stayed unchanged.
-The failed App test server stopped normally, and the disposable Calculator process was terminated.
-The rebuilt Barebone server remained running.
+The next test started the same server directly as root, with the official SELinux helper enabled.
+The live policy hash changed, and the agent memfd had context `u:object_r:frida_memfd:s0`.
+Calculator attach, Native and Java hooks, ten attach/unload/detach cycles, spawn, and cancel-before-resume passed.
+Invalid and exited PIDs returned `ProcessNotFoundError`. Terminating an attached target delivered `process-terminated` without a crash report.
+Module allocation, writes, target thread creation, and agent messages confirmed the official kernel injection route.
 
-The TLS change does not grant App access to the agent file.
-The existing requirement to preserve SELinux policy still applies. No policy or file-label changes formed part of this validation.
-Use port 27043 for App tests and keep the existing Barebone server on port 27042.
-Use the existing `server-no-policy` launcher to preserve the device's current SELinux policy.
-Capture module operation records, created thread IDs, and agent messages for each successful App test.
-Record the results in the [full-mode acceptance record](PIXEL-5.10-FULL.md).
+The server source still has only the Android TLS capacity patch. The SELinux helper and injector entrypoints are unchanged.
+Follow the [direct startup commands](INSTALL.md#full-mode-android-app-connection), using port 27043 for Apps and port 27042 for Barebone PID 0.
+See the [full-mode acceptance record](PIXEL-5.10-FULL.md) for the kernel regression, policy hashes, resource observations, and remaining scope limits.

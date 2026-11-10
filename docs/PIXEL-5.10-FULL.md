@@ -1,10 +1,10 @@
 # Pixel 7a full-mode acceptance record
 
-Status: **experimental; device acceptance is incomplete**. Do not label this preset as fully supported.
+Status: **experimental; scoped Calculator and kernel-session tests passed**. This is not general App or kernel support.
 
 Revision `0bae5f8` passes the process probe, normal module reload, and a minimal kernel JavaScript session on the target device.
 The rebuilt server fixes the observed synthetic Bionic TLS capacity error.
-Calculator injection now stops at a SELinux denial for the agent memfd. Native hooks, Java hooks, and App spawn remain unaccepted.
+Direct server startup restores official SELinux initialization. Calculator Native/Java hooks, spawn, cancellation, and ten attach cycles now pass.
 
 The scope is arm64 Apps, Frida 17.26.2, and kernel `5.10.157-android13-4-00003-g776d0a76f6aa-ab10208116` from source `776d0a76f6aa7c5a92c60afbe886a8e786953199`.
 The backport keeps the official prctl ABI. The latest device test uses a server with the scoped Android TLS patch.
@@ -79,7 +79,7 @@ Root remained available. The device remained globally Enforcing, and the SELinux
 The audit log contained `checkpoint_restore` events with `permissive=1` for the existing KernelSU domain.
 These observations establish policy preservation, not stock-policy equivalence or enforcement in every domain.
 
-## App injection blocker
+## Earlier App injection blocker: stock server TLS
 
 The unchanged Frida 17.26.2 Android server reached allocation, writes, and thread creation in the module.
 The Calculator thread adopted UID 10187, but it crashed before the agent connected back.
@@ -97,7 +97,7 @@ The probe's successful syscall-only thread does not establish a valid Bionic pth
 
 This failure occurred with the unchanged official server. The next test used the rebuilt server described below.
 
-## Rebuilt server: TLS corrected, policy blocker remains
+## Earlier rebuilt-server test: policy initialization disabled
 
 The [Android server patch](SERVER-ANDROID13-TLS.md) increases the total synthetic TLS allocation to 64 KiB.
 The existing quarter-block layout then reserves 16 KiB for Bionic state.
@@ -115,6 +115,45 @@ No additional kernel warning, Oops, panic, or device reboot occurred. Root, glob
 The App test server stopped normally. The disposable Calculator process was terminated to release the failed injection's mappings.
 The rebuilt Barebone server remained running. No SELinux policy or file-label changes formed part of this test.
 
+## Official startup: App tests passed
+
+The next test removed `server-no-policy` and started the same TLS-corrected server directly as root.
+No additional server source patch, kernel module change, or custom SELinux rule was needed.
+The official startup helper loaded its policy, and the injector labeled the agent memfd `u:object_r:frida_memfd:s0`.
+The policy SHA256 changed from `c22b30cb8408cc79f1284610de6ce1f2b463d2fd1d58c56cd9026eb439100e46` to `57a2b0de542ff73c270e465fcb2b64025cba064c98e86f942e431ae1ad002e4f`.
+The hash stayed at the latter value after both servers restarted directly.
+
+The first Calculator attach used PID 20314 and created bootstrap TID 20454 with UID 10187.
+Module allocation, write, and spawn records preceded the agent's Native and Java messages.
+Both hooks preserved the original return values. Ten further attach/script-unload/detach cycles all passed.
+The module recorded 33 allocations and 33 successful frees for these eleven sessions, with one new bootstrap thread per session.
+Across the ten-cycle batch, server RSS changed from 173384 to 173392 KiB and its FD count stayed at 58.
+Calculator RSS changed from 203408 to 203360 KiB, its FD count fell from 126 to 122, and no mapping name contained `frida` after detach.
+These bounded observations do not establish absence of all memory leaks.
+
+Spawn/resume passed both hooks. Cancel-before-resume unloaded the script, detached, and terminated the disposable target.
+Neither spawned process remained after cleanup.
+For those two targets and the active-session termination test, the final deferred region release returned `ESRCH` after the process had exited.
+The kernel had already released each terminated process's address space; the earlier stack and TLS frees returned zero.
+Invalid and exited PIDs returned `ProcessNotFoundError`.
+Terminating a target with an active session delivered `process-terminated` without a crash report.
+An App restart and a normal Android server restart were followed by another successful attach and both hooks.
+The official Barebone entrypoint also passed the PID 0 JavaScript test, returning 42, then unloaded and detached.
+
+Boot ID stayed `8a6ae5b1-6a98-4f06-8200-04dca2757ec9`, root remained available, and every enforcing-state snapshot reported Enforcing.
+No new kernel warning, Oops, panic, device reboot, or Calculator crash appeared in the captured logs.
+The audit log still contained socket `setopt` and `/proc/PID/maps` `ioctl` denials for the App, plus permissive `checkpoint_restore` events in the existing KernelSU domain.
+These did not fail the probes; no extra rules were added for them.
+The App retained its `untrusted_app` context. Global Enforcing does not imply that every domain is enforcing.
+
+Both direct servers remained listening: Barebone on 27042 and ordinary Android on 27043, bound to device loopback and forwarded through ADB.
+No client session remained. The module reference count was one because the Barebone server held `/dev/frida`.
+This test did not reload the module; the three-load/two-unload result above remains the module lifecycle evidence.
+The concurrent target-exit-during-injection race, other Apps, 32-bit targets, and other kernel builds remain untested.
+
+Raw device logs, policy snapshots, host events, and the summary are stored locally in `.work/official-entry-validation-20261110/`.
+The distributable server bundle includes `device-validation.json`; policy binaries and device logs are not committed.
+
 | Acceptance stage | Result |
 | --- | --- |
 | Shared and mode-specific patches apply | Passed for both modes |
@@ -124,13 +163,13 @@ The rebuilt Barebone server remained running. No SELinux policy or file-label ch
 | Current full startup and normal reload | Three loads and two unloads passed |
 | Alloc/read/write/free and user-thread probe | Passed |
 | Rebuilt server TLS capacity | Built and verified; original crash did not recur |
-| Calculator Native and Java hooks | Blocked by SELinux agent-memfd denial before script execution |
-| Spawn and cancellation | Not run after attach failed |
-| Ten attach/unload/detach cycles | Not run |
-| Invalid PID and target exit before spawn | Passed; concurrent exit race remains untested |
-| Kernel server restart and reconnect | Passed |
-| Kernel injection trace plus agent connection | Operations and target thread observed; agent connection failed |
-| Minimal kernel JS session | Passed before/after reload and with the rebuilt server |
+| Calculator Native and Java hooks | Passed with official policy initialization and the TLS-corrected server |
+| Spawn and cancellation | Passed; both disposable processes terminated during cleanup |
+| Ten attach/unload/detach cycles | Passed; Native and Java callbacks in every round |
+| Invalid PID and target exit | Process probes and App lifecycle passed; concurrent injection/exit race remains untested |
+| Server restart and reconnect | Passed for kernel and App entrypoints |
+| Kernel injection trace plus agent connection | Matching allocation, write, bootstrap TID, and script messages observed |
+| Minimal kernel JS session | Passed before/after reload, with the rebuilt server, and with direct official startup |
 
 `features` in build-info describes compiled code. `device_validation` records actual observations. A successful build must not set device acceptance to passed.
 
@@ -145,9 +184,8 @@ The host must compare the reported UID with the target's UID and inspect `/proc/
 Install its Java bridge with `npm ci --prefix tests/device`.
 The hooks report original `getpid()` and `System.identityHashCode()` results and preserve those results.
 The runner supports attach, spawn, cancel-before-resume, and repeated sessions, with bounded operations and cleanup.
-These scripts are prepared test tools, not evidence of successful injection.
+The results above come from these probes; the scripts alone do not establish successful injection.
 
-The unmodified Android server attempts to modify SELinux policy at startup.
-`server-no-policy.c` masks policy reads in a private mount namespace so the official policy helper returns before any write.
-The launcher was tested independently: its policy view was empty, the global policy SHA256 was unchanged, and the device remained Enforcing.
-This verifies preservation of the current policy; it does not claim that the current policy is the stock policy.
+The earlier `server-no-policy.c` launcher masked policy reads in a private mount namespace.
+It preserved the current policy but prevented official agent-file setup. The launcher has been removed.
+Use the [direct official startup commands](INSTALL.md#full-mode-android-app-connection) for both server entrypoints.

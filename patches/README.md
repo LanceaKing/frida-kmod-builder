@@ -66,4 +66,4 @@ Runtime acceptance is tracked separately from compiled features in `build-info.j
 It increases the synthetic TLS block to 64 KiB, so the existing layout reserves 16 KiB for Bionic state.
 The target libc accesses offset `0x2fa1` in that area, beyond the original 2 KiB capacity.
 The kernel-module builder does not select this server patch.
-See the [server build and validation record](../docs/SERVER-ANDROID13-TLS.md) for the remaining SELinux file-access blocker.
+See the [server build and validation record](../docs/SERVER-ANDROID13-TLS.md) for App tests using the official startup policy helper.

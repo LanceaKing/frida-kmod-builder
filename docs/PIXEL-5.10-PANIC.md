@@ -4,7 +4,7 @@ Do not reload artifacts built from `d5f6682` or earlier on this target.
 The revised build removes the identified flag conflict.
 A later device check confirmed that the module remained loaded and the server opened `/dev/frida`.
 Later full-mode revision `0bae5f8` passed a minimal kernel JavaScript session and normal reload.
-See the [full-mode acceptance record](PIXEL-5.10-FULL.md) for that result and the remaining App injection failure.
+See the [full-mode acceptance record](PIXEL-5.10-FULL.md) for that result and later App tests with the TLS-corrected server.
 Compilation, matching symbol CRCs, and matching vermagic do not establish runtime compatibility.
 
 ## Observed failure

@@ -90,7 +90,8 @@ The [Pixel 7a Android 13 preset](presets/pixel-7a-android13-5.10.json) uses this
 The original [kernel-only preset](presets/pixel-7a-android13-5.10.json) remains available for `-p 0` sessions.
 It does not install automatic process hooks and returns `EOPNOTSUPP` for process thread creation.
 The separate [full preset](presets/pixel-7a-android13-5.10-full.json) adds a compatibility backport for this exact kernel and Frida 17.26.2.
-It is an experimental candidate, not a claim of App support. Read the [acceptance record](docs/PIXEL-5.10-FULL.md) before loading it.
+It remains experimental. Calculator Native/Java hooks, spawn, and ten attach cycles passed with the [TLS-corrected server](docs/SERVER-ANDROID13-TLS.md) and official SELinux initialization.
+Read the [acceptance record](docs/PIXEL-5.10-FULL.md) before loading it.
 Other 5.10 kernels and 32-bit Apps are outside the reviewed scope.
 The preset also provides the original `System.map`. The builder derives the offset of `kallsyms_lookup_name` from `_text`; at load time, the exported `kimage_vaddr` supplies the relocated image base.
 This handles trimmed GKI exports without adding invented symbol CRCs or requiring a runtime address parameter.
