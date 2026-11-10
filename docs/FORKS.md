@@ -12,7 +12,7 @@ The build rejects unrelated dependency changes. A build-local npm wrapper maps t
 The official tools program files stay unchanged. The CLI bundles the pinned bridge and keeps its official commands.
 The server keeps its official entrypoint and SELinux helper. Official GumJS devkits and SDK dependencies remain unchanged.
 
-The former top-level Frida and tools forks are no longer dependencies. Their releases move to this builder repository before those forks are deleted.
+The former top-level Frida and tools forks were deleted after the replacement release assets were published and verified in this builder repository.
 Use the new release URLs below. Old URLs in earlier source-lock revisions are historical and no longer supported.
 
 ## Build and publish
