@@ -2,6 +2,9 @@
 
 Status: **experimental; device acceptance is incomplete**. Do not label this preset as fully supported.
 
+Revision `0bae5f8` passes the process probe, normal module reload, and a minimal kernel JavaScript session on the target device.
+Calculator injection fails in the unchanged Android server's synthetic Bionic TLS layout. Native hooks, Java hooks, and App spawn remain unaccepted.
+
 The scope is arm64 Apps, Frida 17.26.2, and kernel `5.10.157-android13-4-00003-g776d0a76f6aa-ab10208116` from source `776d0a76f6aa7c5a92c60afbe886a8e786953199`.
 The backport keeps the official prctl ABI and the official Android server binary.
 Barebone port 27042 serves kernel sessions. Android port 27043 serves App sessions through `KernelInjectSession`.
@@ -37,23 +40,79 @@ Commit `8ccfe4e` adds the image-page fix, mapping preflight, request-entry trace
 Both revised bundles also passed their CRC, undefined-import, vermagic, CFI and writable-section checks.
 The full module SHA256 is `a7cece6a30d139431299d00125fe074a2b8e22ac901c290fa19a4bf92638004c`.
 The kernel-only module SHA256 is `cc7d3f88c49f8354ab093fe13872f2a554ebb8b769460533d72c2d7f220d6d02`.
-The revised candidate has not been loaded on the device.
-The device must first recover from the initial worker that did not finish initialization. A reboot can remove runtime KernelSU root, so recovery requires coordination with the device owner.
+After a reboot and root recovery, this candidate loaded successfully and passed the disposable process probe.
+Calculator attach then failed during executable memory allocation. SELinux denied `execmem` for the process worker's `kernel` domain.
+Revision `f42fc3c` carries the authorized caller's credentials through deferred allocation. It leaves thread creation under the worker's normal credentials.
+
+Loading that revision after a normal unload caused a kernel panic in the module notification chain's CFI check.
+The new module did not reach initialization. The old exit path stopped its worker but left its module notification callback registered.
+That missing cleanup supports a stale-callback explanation. The crash alone does not identify every pointer involved.
+
+## Current device results: 2026-11-10
+
+Revision `0bae5f8` adds synchronous notification cleanup after the agent worker stops. Both modes include this patch.
+
+- [Full build](https://github.com/LanceaKing/frida-kmod-builder/actions/runs/42794839390)
+- [Kernel-only build](https://github.com/LanceaKing/frida-kmod-builder/actions/runs/42794845423)
+
+The full module SHA256 is `463bc642565654c1919e64c351435382ca77533c25cbd2881007c89df3bb3e5a`.
+The kernel-only module SHA256 is `3c6a643b65da09b775b861601b771c48c0d6721227db6661bbc01df64599fabf`.
+Full mode passed 84 symbol CRC and 83 undefined-import checks. Kernel-only mode passed 62 CRC and 61 import checks.
+Both retained the legacy CFI check function and the required writable section flags.
+
+The full module completed three loads and two normal unloads in one boot.
+The second unload followed process probes, an App injection attempt, and a kernel JavaScript session.
+Both servers stopped with SIGTERM. The module reference count reached zero before each unload.
+No forced module removal, kernel warning, Oops, panic, or device reboot occurred during these tests.
+
+The disposable target ran as UID 2000. Its injected thread reported the correct PID, TID, UID, and supplied TLS pointer.
+Allocation, read/write, thread exit, and mapping release passed.
+The target-exit probe returned `ESRCH` when thread creation followed target termination.
+An invalid PID produced failed allocations and no new thread. This allocation API returns zero, not an errno, for that case.
+
+The kernel session at port 27042 loaded `send({kind: 'kernel-ready', value: 6 * 7})` and received the expected value, 42.
+Script unload and session detach completed. The same test passed after module reload and server restart.
+These are two minimal kernel sessions, not a general kernel instrumentation stress test.
+
+Root remained available. The device remained globally Enforcing, and the SELinux policy SHA256 stayed unchanged.
+The audit log contained `checkpoint_restore` events with `permissive=1` for the existing KernelSU domain.
+These observations establish policy preservation, not stock-policy equivalence or enforcement in every domain.
+
+## App injection blocker
+
+The unchanged Frida 17.26.2 Android server reached allocation, writes, and thread creation in the module.
+The Calculator thread adopted UID 10187, but it crashed before the agent connected back.
+The crash was a userspace SIGSEGV in `ScopedTrace::ScopedTrace`, called by `pthread_create`. It was not a kernel panic.
+
+The official [`synthesize_tls()` implementation](https://github.com/frida/frida-core/blob/17.26.2/src/linux/kernel-injector.vala#L306) allocates an 8 KiB block.
+It places the Bionic scratch area at three quarters of the block, leaving 2 KiB.
+The device's `libc.so` reads the Bionic TLS pointer from `TPIDR_EL0 - 8`, then reads a byte at offset `0x2fa1`.
+The captured pointer plus that offset exactly matches the reported fault address.
+This read falls outside the synthetic TLS allocation.
+
+The faulting code uses `bionic_systrace_disabled`, a field in Android 13's `bionic_tls` structure.
+The device binary provides the decisive offset evidence. The matching source layout is supporting evidence.
+The probe's successful syscall-only thread does not establish a valid Bionic pthread environment.
+
+The current scope requires the official server binary to remain unchanged.
+Fixing the server's TLS layout requires a scope change. No server modification or further App injection attempt formed part of this validation.
+The Android App server was stopped. The Barebone server remained available on port 27042.
 
 | Acceptance stage | Result |
 | --- | --- |
 | Shared and mode-specific patches apply | Passed for both modes |
 | Offline builds | Passed for both revisions and modes |
-| CRC, vermagic, CFI and writable sections | Passed for both revisions and modes |
+| CRC, vermagic, CFI and writable sections | Passed for current full and kernel-only bundles |
 | First full startup | Failed before service readiness; artifact rejected |
-| Revised full startup | Not tested |
-| Alloc/read/write/free and user-thread probe | Prepared, not run |
-| Calculator Native and Java hooks | Prepared, not run |
-| Spawn and cancellation | Prepared, not run |
+| Current full startup and normal reload | Three loads and two unloads passed |
+| Alloc/read/write/free and user-thread probe | Passed |
+| Calculator Native and Java hooks | Blocked by userspace TLS crash before agent connection |
+| Spawn and cancellation | Not run after attach failed |
 | Ten attach/unload/detach cycles | Not run |
-| Invalid PID, exit race, restart and reconnect | Not run |
-| Kernel injection trace plus agent connection | Not established |
-| Minimal kernel JS session | Not run |
+| Invalid PID and target exit before spawn | Passed; concurrent exit race remains untested |
+| Kernel server restart and reconnect | Passed |
+| Kernel injection trace plus agent connection | Operations and target thread observed; agent connection failed |
+| Minimal kernel JS session | Passed twice, including after reload |
 
 `features` in build-info describes compiled code. `device_validation` records actual observations. A successful build must not set device acceptance to passed.
 

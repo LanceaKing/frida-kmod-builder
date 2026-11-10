@@ -66,7 +66,8 @@ int main(int argc, char **argv) {
         printf("{\"ping\":%ld,\"errno\":%d}\n", result, errno);
         return result == MAGIC ? 0 : 1;
     }
-    if (argc != 4 || strcmp(argv[1], "control")) return 2;
+    int exit_test = argc == 4 && !strcmp(argv[1], "control-exit");
+    if (argc != 4 || (strcmp(argv[1], "control") && !exit_test)) return 2;
     pid_t pid = atoi(argv[2]);
     uint64_t entry = strtoull(argv[3], NULL, 0);
     uint64_t memory = allocate(pid, 4096), stack = allocate(pid, 65536);
@@ -79,6 +80,20 @@ int main(int argc, char **argv) {
         transfer(pid, memory + 128, &readback, sizeof(readback), 0) || readback != pattern)
         goto cleanup;
     struct spawn_args args = {entry, stack + 65536 - 16, memory, memory + 2048, (uint32_t)pid};
+    if (exit_test) {
+        /* Exit after allocations and transfers, but before thread setup. The
+         * process teardown owns the mappings; do not free a reused PID's mm. */
+        if (kill(pid, SIGTERM)) return 1;
+        char target_path[64];
+        snprintf(target_path, sizeof(target_path), "/proc/%d", pid);
+        for (int i = 0; i != 300 && access(target_path, F_OK) == 0; i++) usleep(10000);
+        if (access(target_path, F_OK) == 0) return 1;
+        errno = 0;
+        tid = control(68, &args);
+        printf("{\"stage\":\"target-exit\",\"ok\":%s,\"tid\":%ld,\"errno\":%d}\n",
+               tid == -1 && errno == ESRCH ? "true" : "false", tid, errno);
+        return tid == -1 && errno == ESRCH ? 0 : 1;
+    }
     tid = control(68, &args);
     if (tid <= 0) goto cleanup;
     spawned = 1;

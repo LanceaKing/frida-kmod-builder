@@ -44,6 +44,12 @@ Android 5.10 can place its randomized image inside the range accepted by `is_vma
 `vmalloc_to_page()` cannot handle the image's block mappings. The patch uses `__pa_symbol()` for image pages and rejects allocation or page lookup failures before `vmap()`.
 Both modes use this fix.
 
+`0007-unregister-module-notifier.patch` removes the module event callback during unload.
+The exit path first waits for the agent worker to stop, so startup cannot register another callback after cleanup.
+It then calls the existing synchronous unregister function before the loader frees the module.
+This also covers a worker that stops after an initialization failure.
+Both modes use this fix. It does not change CFI enforcement.
+
 `full-5.10/0006-linux-5.10-process-injection.patch` is selected only for the pinned Pixel 7a kernel and Frida 17.26.2.
 It uses the 5.10 `kernel_thread` entry convention, then prepares EL0 registers, stack, TLS, user address access, PAC/MTE state, credentials, seccomp state, namespaces, and thread-group membership before returning to userspace.
 It uses two-argument `detach_pid`, omits `free_pids` and the absent `quick_threads` field, transfers the user/process accounting, and uses the target kernel's signal cleanup helper.
