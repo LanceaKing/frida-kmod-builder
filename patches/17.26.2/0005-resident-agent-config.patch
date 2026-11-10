@@ -1,0 +1,9 @@
+--- a/src/barebone/agent/etc/linux-kmod.json
++++ b/src/barebone/agent/etc/linux-kmod.json
+@@ -1,5 +1,6 @@
+ {
+   "agent": {
++    "type": "resident",
+     "transport": {
+       "type": "device",
+       "path": "/dev/frida"

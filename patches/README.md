@@ -34,3 +34,7 @@ This linker flag overlaps Linux's internal `SHF_RO_AFTER_INIT` flag.
 The final module must contain no such flags on writable sections, and `.bss` must remain writable, allocated, and NOBITS.
 Native kbuild can retain read-only `.text`. The loader classifies code before its read-only-after-init class, so this remains safe.
 The kernel still applies its own protections to `.data..ro_after_init` and `__jump_table` during loading.
+
+`0005-resident-agent-config.patch` adds the required `agent.type` value, `resident`, to the upstream Linux module configuration.
+Frida 17.26.2 selects the agent configuration class using this field.
+Without it, the supplied example fails with `Config for 'agent' is invalid` before opening `/dev/frida`.

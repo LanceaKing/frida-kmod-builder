@@ -1,7 +1,9 @@
 # Pixel 7a Linux 5.10 startup panic
 
 Do not reload artifacts built from `d5f6682` or earlier on this target.
-The revised build removes the identified flag conflict. Device loading and kernel sessions remain untested for the revision.
+The revised build removes the identified flag conflict.
+A later device check confirmed that the module remained loaded and the server opened `/dev/frida`.
+JavaScript instrumentation remains untested.
 Compilation, matching symbol CRCs, and matching vermagic do not establish runtime compatibility.
 
 ## Observed failure
@@ -61,6 +63,14 @@ All 28 local tests passed, and [Actions run 42780176775](https://github.com/Lanc
 The revised module has SHA256 `ddfece51db48aee0b9b4b5b8e0e107239e355b1384a9a7757d437e515edd72a0` and `.bss` flags `0x3`.
 Offline validation matched the target vermagic, all 62 symbol CRC records, all 61 imported symbols, and bundle hashes.
 The legacy CFI check function remained present. The apt, source, download, and Rust caches were reused.
-The revised artifact still requires supervised device validation before normal use.
+The revised artifact still requires further device validation before normal use.
 No repeat module load, root reactivation, reboot, or boot-image change formed part of this investigation.
 KernelSU runtime jailbreak root must be reactivated through the previously used method after a full reboot.
+
+## Follow-up connection configuration
+
+After the user loaded the revised module, the server rejected the bundled JSON with `Config for 'agent' is invalid`.
+The upstream 17.26.2 example omitted `agent.type`, which its parser requires.
+Adding `"type": "resident"` let the server start, open `/dev/frida`, and listen on `127.0.0.1:27042`.
+The device retained the same boot ID and root access during this check. No module reload was needed.
+The build now applies a configuration patch so future bundles include the required field.

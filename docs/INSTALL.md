@@ -28,6 +28,22 @@ adb shell su -c 'dmesg | tail -n 60'
 ```
 
 The agent reports `frida: listening on /dev/frida` when it is ready.
+The connection configuration must include `agent.type`:
+
+```json
+{
+  "agent": {
+    "type": "resident",
+    "transport": {
+      "type": "device",
+      "path": "/dev/frida"
+    }
+  }
+}
+```
+
+If the server reports `Config for 'agent' is invalid`, replace the older JSON with this configuration.
+This configuration change does not require reloading the module.
 Start the server in the foreground and keep that terminal open:
 
 ```sh
