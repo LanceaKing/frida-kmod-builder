@@ -152,12 +152,13 @@ class ConfigurationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "No pinned fork"):
             builder.frida_source(c)
 
-    def test_full_510_rejects_unreviewed_targets(self):
-        preset = builder.read_json(builder.ROOT / "presets/pixel-7a-android13-5.10-full.json")
-        for change in ({"kernel_release": "5.10.157-android13-4-g1234567-ab999"},
-                       {"kernel_ref": "main"}, {"frida_version": "17.26.3"}):
-            with self.subTest(change=change), self.assertRaisesRegex(ValueError, "limited"):
-                builder.configuration({**preset, **change})
+    def test_full_510_accepts_gki_families_and_patch_levels(self):
+        for release in ("5.10.43-android12-9-g1234567-ab999",
+                        "5.10.240-android13-4-gabcdef0-ab12345"):
+            with self.subTest(release=release):
+                c = builder.configuration({"kernel_release": release})
+                self.assertEqual(builder.frida_source(c)["profile"], "full-5.10")
+                self.assertEqual(c["kernel_ref"], release.split("-g")[1].split("-")[0])
 
     def test_rejects_wrong_family(self):
         with self.assertRaisesRegex(ValueError, "family"):

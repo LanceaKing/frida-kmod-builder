@@ -7,8 +7,8 @@ The [Java bridge fork](https://github.com/LanceaKing/frida-java-bridge) contains
 The [compatibility index](COMPATIBILITY.md) links every former patch to its owning commit.
 
 The builder uses one core commit from [the source lock](../sources/frida-17.26.2.json) for every module mode.
-`FRIDA_KERNEL_ONLY` disables process injection. `FRIDA_LINUX_510_BACKPORT` explicitly selects the tested Pixel 7a process ABI.
-The default path retains the upstream process ABI; a shared source branch does not imply support for every kernel.
+`FRIDA_KERNEL_ONLY` disables process injection. ARM64 Linux 5.10 automatically selects the GKI process ABI; optional ARM64 fields are detected from the target headers.
+Other kernel families retain the upstream process ABI. Each module must be rebuilt against the exact target kernel configuration and symbols; a shared source branch does not make module binaries portable.
 It builds tools from a fixed [official frida-tools commit](https://github.com/frida/frida-tools/commit/6bbae44a5df871524619337130471871ccc386dd).
 Only `bridges/package.json` and `bridges/package-lock.json` are replaced with the copies in `sources/tools-17.26.2/`.
 The build rejects unrelated dependency changes. A build-local npm wrapper maps the upstream helpers' `npm install` calls to `npm ci`.

@@ -21,8 +21,6 @@ ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / ".work"
 DIST = ROOT / "dist"
 DEFAULT_RELEASE = "6.1.145-android14-11-gc1de4747ac59-ab14219743"
-PIXEL_510_RELEASE = "5.10.157-android13-4-00003-g776d0a76f6aa-ab10208116"
-PIXEL_510_COMMIT = "776d0a76f6aa7c5a92c60afbe886a8e786953199"
 DEFAULTS = {
     "frida_version": "17.26.2",
     "kernel_release": DEFAULT_RELEASE,
@@ -107,10 +105,6 @@ def configuration(values):
     if c["system_map_url"]:
         require(c["kernel_image_url"] and family[1] == "5.10",
                 "System.map bootstrap requires image preparation and Linux 5.10.")
-    if c["agent_mode"] == "full" and family[1] == "5.10":
-        require(c["kernel_release"] == PIXEL_510_RELEASE and c["kernel_ref"] == PIXEL_510_COMMIT
-                and c["frida_version"] == "17.26.2",
-                "The full 5.10 backport is limited to the pinned Pixel 7a kernel and Frida 17.26.2.")
     c["artifact_name"] = f"{c['module_name']}-{c['frida_version']}-{c['kernel_release']}-{c['agent_mode']}"
     return c
 
@@ -129,7 +123,7 @@ def frida_source(c):
     profile = "common"
     if c["agent_mode"] == "kernel-only":
         profile = "kernel-only"
-    elif c["kernel_release"] == PIXEL_510_RELEASE:
+    elif c["kernel_release"].startswith("5.10."):
         profile = "full-5.10"
     commit = lock["core"]["commit"]
     require(re.fullmatch(r"[0-9a-f]{40}", commit), "Fork sources require a full commit SHA, not a branch or tag.")
@@ -488,8 +482,6 @@ def build():
     if c["kernel_image_url"]:
         extra_args += [f"KERNELRELEASE={c['kernel_release']}", "LLVM_IAS=1", "CROSS_COMPILE=aarch64-linux-gnu-"]
     definitions = ["-DFRIDA_KERNEL_ONLY"] if c["agent_mode"] == "kernel-only" else []
-    if c["agent_mode"] == "full" and c["kernel_release"] == PIXEL_510_RELEASE:
-        definitions.append("-DFRIDA_LINUX_510_BACKPORT")
     if sources.get("symbol_bootstrap"):
         offset = sources["symbol_bootstrap"]["kallsyms_lookup_name_offset"]
         definitions += ["-DFRIDA_GKI_TRIMMED_EXPORTS", f"-DFRIDA_KALLSYMS_LOOKUP_OFFSET={offset}UL"]
