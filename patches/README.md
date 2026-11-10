@@ -1,8 +1,8 @@
 # Frida compatibility patches
 
-The builder applies patches only from the directory for the selected Frida version.
-Each patch must pass `git apply --check` against that version.
-The artifact includes the applied patches, and `build-info.json` records their hashes.
+These files preserve the patches used before the [fork migration](../docs/FORKS.md).
+The builder now checks out fixed fork commits and does not apply these files.
+Artifacts include `frida-sources.json`; `build-info.json` records the selected commit and source-lock hash.
 
 Frida 17.26.2 accesses `task_struct.sysvsem` without testing `CONFIG_SYSVIPC`.
 Android GKI build `14219743` disables this option, and its `task_struct` has no such member.
@@ -11,13 +11,13 @@ It retains the original semaphore code when the option is enabled.
 It does not change the target kernel configuration.
 
 The patch modifies Frida source and retains its upstream license.
-New Frida releases receive no patch unless a corresponding directory exists here.
+New Frida releases require an explicit source lock; builds never fall back to unpatched upstream sources.
 
 The separate `frida-java-bridge/7.0.13/` patch controls Java callback lifetime during script unload on the pinned Android 13 device.
-Apply it to the script project's npm dependency, then recompile the scripts.
+Install the pinned fork bridge in the script project, then recompile the scripts.
 The kernel builder and server patches do not apply it. See the [teardown instructions and regression test](../docs/JAVA-TEARDOWN.md).
 
-With `agent_mode=kernel-only`, the builder also applies `17.26.2/kernel-only/0002-kernel-session-only.patch` and defines `FRIDA_KERNEL_ONLY`.
+The `kernel-only` fork profile includes `17.26.2/kernel-only/0002-kernel-session-only.patch` and defines `FRIDA_KERNEL_ONLY`.
 This excludes process thread creation and reparenting, which use newer fields and interfaces absent from Android 13 Linux 5.10.
 Thread injection returns `-EOPNOTSUPP`. The automatic process-hook installer returns without creating a worker or installing hooks.
 Kernel sessions through `/dev/frida` remain enabled. This patch does not change the kernel configuration.

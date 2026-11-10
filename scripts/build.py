@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the upstream Frida arm64 kernel module against a prepared kernel."""
+"""Build the pinned Frida fork against a prepared arm64 kernel."""
 
 import argparse
 import base64
@@ -119,19 +119,26 @@ def read_json(path):
     return json.loads(path.read_text())
 
 
-def select_patches(c):
-    patch_dir = ROOT / "patches" / c["frida_version"]
-    selected = sorted(patch_dir.glob("*.patch"))
-    mode_dir = None
+def frida_source(c):
+    version = c["frida_version"]
+    require(re.fullmatch(r"\d+\.\d+\.\d+", version), "Invalid Frida version.")
+    path = ROOT / "sources" / f"frida-{version}.json"
+    require(path.is_file(), f"No pinned fork sources exist for Frida {version}.")
+    lock = read_json(path)
+    require(lock["version"] == version, "The source lock has a different Frida version.")
+    profile = "common"
     if c["agent_mode"] == "kernel-only":
-        mode_dir = patch_dir / "kernel-only"
+        profile = "kernel-only"
     elif c["kernel_release"] == PIXEL_510_RELEASE:
-        mode_dir = patch_dir / "full-5.10"
-    if mode_dir is not None:
-        mode_patches = sorted(mode_dir.glob("*.patch"))
-        require(mode_patches, f"No compatibility patches exist in {mode_dir}.")
-        selected += mode_patches
-    return selected
+        profile = "full-5.10"
+    commit = lock["core"]["profiles"][profile]
+    require(re.fullmatch(r"[0-9a-f]{40}", commit), "Fork sources require a full commit SHA, not a branch or tag.")
+    server = lock["server"]
+    https_url(server["url"])
+    for key in ("sha256", "binary_sha256"):
+        require(re.fullmatch(r"[0-9a-f]{64}", server[key]), f"The fork server requires {key}.")
+    return {"repository": https_url(lock["core"]["repository"]), "commit": commit,
+            "profile": profile, "lock_sha256": sha256(path), "server": server}
 
 
 def write_json(path, value):
@@ -253,6 +260,7 @@ def extract(archive, directory):
 def configure():
     WORK.mkdir(exist_ok=True)
     c = configuration({k: os.environ.get(k.upper(), v) for k, v in DEFAULTS.items()})
+    source = frida_source(c)
     write_json(WORK / "configuration.json", c)
     print(json.dumps(c, indent=2))
     if output := os.environ.get("GITHUB_OUTPUT"):
@@ -260,6 +268,7 @@ def configure():
             stream.write(f"artifact_name={c['artifact_name']}\n")
             environment = {key: value for key, value in c.items()
                            if key not in ("agent_mode", "module_name", "artifact_name", "include_server", "rust_toolchain")}
+            environment["frida_source_lock_sha256"] = source["lock_sha256"]
             key = hashlib.sha256(json.dumps(environment, sort_keys=True).encode()).hexdigest()
             stream.write(f"environment_cache_key={key}\n")
             stream.write(f"cache_epoch={datetime.now(timezone.utc).strftime('%G-W%V')}\n")
@@ -280,7 +289,7 @@ def git_checkout(repository, ref, destination):
     else:
         run("git", "-C", destination, "fetch", "--depth=1", "origin", ref)
     # Only the scratch repository's .git directory is cached. Restore its files
-    # from the verified commit before applying any version-specific patches.
+    # from the pinned commit. Fork commits already contain their fixes.
     run("git", "-C", destination, "checkout", "--detach", "--force", ref if present else "FETCH_HEAD")
     return run("git", "-C", destination, "rev-parse", "HEAD", capture=True).strip()
 
@@ -405,6 +414,7 @@ def prepare_from_image(c, prepared):
 
 def prepare():
     c = read_json(WORK / "configuration.json")
+    source = frida_source(c)
     prepared = WORK / "kernel-prepared"
     prepared.mkdir(parents=True, exist_ok=True)
 
@@ -438,36 +448,35 @@ def prepare():
 
     # The prepared Makefile can refer to the original CI workspace.
     # Passing KDIR and KOUT to upstream kbuild rewrites this stub for this runner.
-    frida_commit = git_checkout("https://github.com/frida/frida-core.git", c["frida_version"], WORK / "frida-core")
-    patches = []
-    for patch in select_patches(c):
-        run("git", "apply", "--check", patch, cwd=WORK / "frida-core")
-        run("git", "apply", patch, cwd=WORK / "frida-core")
-        patches.append({"path": str(patch.relative_to(ROOT)), "sha256": sha256(patch)})
-    run("git", "submodule", "update", "--init", "--recursive", "--depth=1", "releng", cwd=WORK / "frida-core")
+    frida_commit = git_checkout(source["repository"], source["commit"], WORK / "frida-core-fork")
+    require(frida_commit == source["commit"], "The fetched Frida commit differs from the source lock.")
+    run("git", "submodule", "update", "--init", "--recursive", "--depth=1", "releng", cwd=WORK / "frida-core-fork")
     base = f"https://github.com/frida/frida/releases/download/{c['frida_version']}"
     devkit = f"frida-gumjs-devkit-{c['frida_version']}-none-arm64-softfloat_nopic.tar.xz"
     download(f"{base}/{devkit}", WORK / "gumjs-devkit.tar.xz")
     extract(WORK / "gumjs-devkit.tar.xz", WORK / "gumjs-devkit")
-    run(sys.executable, "releng/deps.py", "sync", "sdk", "none-arm64-softfloat_nopic", WORK / "sdk", cwd=WORK / "frida-core")
+    run(sys.executable, "releng/deps.py", "sync", "sdk", "none-arm64-softfloat_nopic", WORK / "sdk", cwd=WORK / "frida-core-fork")
 
     write_json(WORK / "sources.json", {
         "kernel_commit": kernel_commit, "frida_commit": frida_commit,
-        "frida_patches": patches,
+        "frida_repository": source["repository"], "frida_source_profile": source["profile"],
+        "frida_source_lock_sha256": source["lock_sha256"], "frida_patches": [],
         "kernel_preparation": preparation,
         "symbol_bootstrap": bootstrap,
-        "releng_commit": run("git", "rev-parse", "HEAD", cwd=WORK / "frida-core/releng", capture=True).strip(),
+        "releng_commit": run("git", "rev-parse", "HEAD", cwd=WORK / "frida-core-fork/releng", capture=True).strip(),
         "kernel_clang_url": clang_url, "kernel_clang_bin": str(clang_bin),
         "kernel_config_sha256": sha256(prepared / ".config"),
         "module_symvers_sha256": sha256(prepared / "Module.symvers"),
         "sdk_libc_sha256": sha256(WORK / "sdk/lib/libc.a"),
-        "sdk_deps_file_sha256": sha256(WORK / "frida-core/releng/deps.toml"),
+        "sdk_deps_file_sha256": sha256(WORK / "frida-core-fork/releng/deps.toml"),
     })
 
 
 def build():
     c = read_json(WORK / "configuration.json")
     sources = read_json(WORK / "sources.json")
+    require(sources.get("frida_source_lock_sha256") == frida_source(c)["lock_sha256"],
+            "The fork source lock changed after preparation. Run prepare again.")
     env = os.environ.copy()
     env.update({"RUSTUP_TOOLCHAIN": c["rust_toolchain"], "LIBCLANG_PATH": "/usr/lib/llvm-19/lib",
                 "GUMJS_DEVKIT_DIR": str(WORK / "gumjs-devkit"), "FRIDA_SDK": str(WORK / "sdk"),
@@ -484,7 +493,7 @@ def build():
         definitions += ["-DFRIDA_GKI_TRIMMED_EXPORTS", f"-DFRIDA_KALLSYMS_LOOKUP_OFFSET={offset}UL"]
     if definitions:
         extra_args += ["EXTRA_CFLAGS=" + " ".join(definitions)]
-    agent_dir = WORK / "frida-core/src/barebone/agent/linux"
+    agent_dir = WORK / "frida-core-fork/src/barebone/agent/linux"
     make_args = ["make", "-C", agent_dir,
         f"-j{min(os.cpu_count() or 2, 8)}", "ARCH=arm64", "BITS=64",
         f"MODULE_NAME={c['module_name']}", f"FRIDA_SDK={WORK / 'sdk'}",
@@ -507,18 +516,34 @@ def build():
             "kbuild changed the kernel configuration. Use the compiler and artifacts from the original build.")
 
 
+def fetch_server(c, destination):
+    import lzma
+    server = frida_source(c)["server"]
+    archive = WORK / "frida-server.xz"
+    download(server["url"], archive)
+    require(sha256(archive) == server["sha256"], "Fork server archive checksum mismatch.")
+    partial = destination.with_suffix(".partial")
+    with lzma.open(archive) as stream, partial.open("wb") as out:
+        shutil.copyfileobj(stream, out)
+    require(sha256(partial) == server["binary_sha256"], "Fork server binary checksum mismatch.")
+    partial.chmod(0o755)
+    partial.replace(destination)
+
+
 def package():
     c = read_json(WORK / "configuration.json")
     sources = read_json(WORK / "sources.json")
+    require(sources.get("frida_source_lock_sha256") == frida_source(c)["lock_sha256"],
+            "The fork source lock changed after preparation. Run prepare and build again.")
     DIST.mkdir(exist_ok=True)
     module = DIST / f"{c['module_name']}.ko"
-    section_validation = inspect_module_sections(WORK / "frida-core/src/barebone/agent/linux" / module.name)
-    shutil.copy2(WORK / "frida-core/src/barebone/agent/linux" / module.name, module)
+    section_validation = inspect_module_sections(WORK / "frida-core-fork/src/barebone/agent/linux" / module.name)
+    shutil.copy2(WORK / "frida-core-fork/src/barebone/agent/linux" / module.name, module)
     vermagic = run("modinfo", "-F", "vermagic", module, capture=True).strip()
     require(vermagic.split()[0] == c["kernel_release"], "The output module vermagic does not match kernel_release.")
     elf = run("readelf", "-h", module, capture=True)
     require("AArch64" in elf and "REL (Relocatable file)" in elf, "The output must be an AArch64 relocatable ELF module.")
-    shutil.copy2(WORK / "frida-core/src/barebone/agent/etc/linux-kmod.json", DIST / "linux-kmod.json")
+    shutil.copy2(WORK / "frida-core-fork/src/barebone/agent/etc/linux-kmod.json", DIST / "linux-kmod.json")
     shutil.copy2(ROOT / "docs/INSTALL.md", DIST / "INSTALL.md")
     if c["agent_mode"] == "kernel-only":
         note = ("This is a kernel-session-only build. Connect with `-p 0`.\n"
@@ -526,19 +551,12 @@ def package():
         install = DIST / "INSTALL.md"
         install.write_text(note + install.read_text())
     shutil.copy2(ROOT / "THIRD_PARTY_NOTICES.md", DIST / "THIRD_PARTY_NOTICES.md")
-    shutil.copy2(WORK / "frida-core/COPYING", DIST / "LICENSE.frida-core")
+    shutil.copy2(WORK / "frida-core-fork/COPYING", DIST / "LICENSE.frida-core")
     shutil.copy2(WORK / "kernel-source/COPYING", DIST / "LICENSE.kernel")
-    for patch in sources["frida_patches"]:
-        path = ROOT / patch["path"]
-        shutil.copy2(path, DIST / path.name)
+    shutil.copy2(ROOT / "sources" / f"frida-{c['frida_version']}.json", DIST / "frida-sources.json")
     (DIST / "modinfo.txt").write_text(run("modinfo", module, capture=True))
     if c["include_server"] == "true":
-        import lzma
-        url = f"https://github.com/frida/frida/releases/download/{c['frida_version']}/frida-server-{c['frida_version']}-android-arm64.xz"
-        download(url, WORK / "frida-server.xz")
-        with lzma.open(WORK / "frida-server.xz") as stream, (DIST / "frida-server").open("wb") as out:
-            shutil.copyfileobj(stream, out)
-        (DIST / "frida-server").chmod(0o755)
+        fetch_server(c, DIST / "frida-server")
     provenance = {
         "configuration": c, "sources": sources, "downloads": read_json(WORK / "downloads.json"),
         "vermagic": vermagic,

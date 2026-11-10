@@ -31,18 +31,22 @@ The existing JVM and Dalvik disposal paths remain unchanged.
 The thread-list lock requirement comes from [ART's `ThreadList::ForEach` declaration](https://android.googlesource.com/platform/art/+/refs/tags/android-13.0.0_r75/runtime/thread_list.h#140).
 The inspection reads each frame's method through [ART's `StackVisitor::GetMethod`](https://android.googlesource.com/platform/art/+/refs/tags/android-13.0.0_r75/runtime/stack.cc#104).
 
-## Apply the bridge patch
+## Install the fork bridge
 
 Run these commands from the builder repository on the host:
 
 ```sh
 npm ci --prefix tests/device
-patch -p1 -d tests/device/node_modules/frida-java-bridge < patches/frida-java-bridge/7.0.13/0001-drain-art-replacements-on-unload.patch
 ```
 
-For a separate script project, install bridge version 7.0.13 there and apply the same patch to its package directory.
-Recompile that project's scripts after applying the patch.
-An npm reinstall replaces the patched files. Apply the patch again after a clean install.
+For a separate script project, pin the fork commit and keep its lock file:
+
+```sh
+npm install --save-exact https://codeload.github.com/LanceaKing/frida-java-bridge/tar.gz/70b66c7a60902b4f5c83f7a9f5e55c9c952bbf4e
+```
+
+Recompile that project's scripts after installation. Clean installs retain the fix.
+The [fork tools wheel](FORKS.md) also bundles this bridge for the standard CLI.
 Keep the [official server startup](INSTALL.md#full-mode-android-app-connection).
 
 ## Reproduce the concurrent unload test
@@ -99,7 +103,7 @@ The deployed server SHA256 remained `77eecc8c7145793cd162bef0cfdca5ce0e044c46782
 
 The patch applies to a clean bridge 7.0.13 package and reproduces all three tested source files exactly.
 The 30 repository tests, Python and JavaScript syntax checks, Java fixture compilation, Android C syntax check, and workflow lint passed locally.
-CI also applies the bridge patch to a fresh dependency install.
+CI installs the pinned fork bridge from the lock file and checks its JavaScript syntax.
 These results cover the stated device and script-unload path. They do not establish every possible interleaving or compatibility with another ART build.
 
 Local diagnosis evidence is in `.work/teardown-investigation-20261110/`.

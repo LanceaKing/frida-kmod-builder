@@ -91,7 +91,7 @@ The original [kernel-only preset](presets/pixel-7a-android13-5.10.json) remains 
 It does not install automatic process hooks and returns `EOPNOTSUPP` for process thread creation.
 The separate [full preset](presets/pixel-7a-android13-5.10-full.json) adds a compatibility backport for this exact kernel and Frida 17.26.2.
 It remains experimental. The pinned device passed the bounded regression matrix with the server patches and the separate [Java bridge teardown patch](docs/JAVA-TEARDOWN.md).
-Apply that bridge patch in each script project and recompile its Java scripts. The server rebuild alone does not contain this correction.
+Install the pinned fork bridge in each script project and recompile its Java scripts. The [fork CLI](docs/FORKS.md) bundles this bridge. The server rebuild alone does not contain it.
 The [patched server](docs/SERVER-ANDROID13-TLS.md) corrects TLS capacity and a connection leak during failed injection.
 Read the [acceptance record](docs/PIXEL-5.10-FULL.md) before loading it.
 Other 5.10 kernels and 32-bit Apps are outside the reviewed scope.
@@ -116,7 +116,7 @@ Artifacts expire after 30 days. Diagnostics expire after 14 days.
 Actions caches apt package downloads, kernel Git objects, downloaded source artifacts and compiler archives, the Frida SDK, Rust toolchains, and Cargo dependencies.
 Each downloaded file is keyed by its full URL and checked against its recorded SHA256 before reuse. Corrupt entries are downloaded again.
 The environment cache key includes the kernel source and artifact inputs and the Frida version. Apt and Rust keys also rotate weekly so package updates can enter the cache.
-Prepared kernel headers and patched Frida source are rebuilt each run; configuration, source, and output checks still run on a cache hit.
+Prepared kernel headers and pinned fork source are rebuilt each run; configuration, source, and output checks still run on a cache hit.
 The apt and source caches are saved before compilation, so a later compile failure does not discard a prepared environment. Rust and Cargo caches are also saved after a compile failure.
 The first run fills the caches. Later runs show `Cache restored` and `Download cache hit` in the logs. GitHub may evict unused caches; a miss only causes a download.
 
@@ -130,5 +130,5 @@ Temporary files stay in `.work/`, and packaged files stay in `dist/`.
 The Actions form takes inspiration from [WildKernels/GKI_KernelSU_SUSFS](https://github.com/WildKernels/GKI_KernelSU_SUSFS).
 This repository does not copy its kernel patches or build a replacement kernel.
 The build follows [Frida's Linux module instructions](https://github.com/frida/frida-core/blob/17.26.2/src/barebone/agent/linux/README.md).
-Version-specific [compatibility patches](patches/README.md) are recorded in each artifact.
+The builder uses [pinned official forks](docs/FORKS.md). Each artifact records the exact commits in `frida-sources.json`. Local [patch files](patches/README.md) remain as historical evidence and are no longer applied during builds.
 Frida and the Linux kernel retain their upstream licenses. See [third-party notices](THIRD_PARTY_NOTICES.md).

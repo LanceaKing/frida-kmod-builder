@@ -263,3 +263,8 @@ An operation result in its JSON does not accept post-detach recovery by itself. 
 The earlier `server-no-policy.c` launcher masked policy reads in a private mount namespace.
 It preserved the current policy but prevented official agent-file setup. The launcher has been removed.
 Use the [direct official startup commands](INSTALL.md#full-mode-android-app-connection) for both server entrypoints.
+
+## Fork source migration
+
+The current builder uses pinned official forks. See [fork provenance and validation](FORKS.md).
+The earlier binary hashes and test results above remain historical evidence for their recorded builds.
