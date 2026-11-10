@@ -75,6 +75,35 @@ class ModuleSectionTests(unittest.TestCase):
                 builder.elf_sections(blob)
 
 
+class ForkServerTests(unittest.TestCase):
+    def test_checks_archive_and_binary_before_replacing_output(self):
+        import hashlib
+        import lzma
+        good = b"tested fork server"
+        archive = lzma.compress(good)
+        digest = lambda value: hashlib.sha256(value).hexdigest()
+        for corrupt_archive, corrupt_binary in [(False, False), (True, False), (False, True)]:
+            with self.subTest(archive=corrupt_archive, binary=corrupt_binary), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                output = root / "frida-server"
+                output.write_bytes(b"previous")
+                server = {"url": "https://example.com/server.xz", "sha256": digest(archive),
+                          "binary_sha256": digest(b"wrong" if corrupt_binary else good)}
+                def fetch(url, destination):
+                    destination.write_bytes(b"corrupt" if corrupt_archive else archive)
+                with mock.patch.object(builder, "WORK", root), \
+                     mock.patch.object(builder, "frida_source", return_value={"server": server}), \
+                     mock.patch.object(builder, "download", side_effect=fetch):
+                    if corrupt_archive or corrupt_binary:
+                        with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+                            builder.fetch_server({}, output)
+                        self.assertEqual(output.read_bytes(), b"previous")
+                    else:
+                        builder.fetch_server({}, output)
+                        self.assertEqual(output.read_bytes(), good)
+                        self.assertEqual(output.stat().st_mode & 0o777, 0o755)
+
+
 class ConfigurationTests(unittest.TestCase):
     def test_infers_exact_android_build(self):
         result = builder.configuration({})
@@ -97,17 +126,30 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(result["android_ci_build"], "")
         self.assertEqual(result["kernel_ref"], "vendor-tag")
 
-    def test_pixel_modes_share_bootstrap_but_not_process_patch(self):
+    def test_fork_profiles_keep_pixel_modes_separate(self):
         configs = [builder.configuration(builder.read_json(builder.ROOT / "presets" / name))
                    for name in ("pixel-7a-android13-5.10.json", "pixel-7a-android13-5.10-full.json")]
-        paths = [builder.select_patches(c) for c in configs]
-        common = builder.ROOT / "patches/17.26.2/0003-gki-trimmed-exports.patch"
-        for selected in paths:
-            self.assertIn(common, selected)
-        self.assertTrue(any(p.parent.name == "kernel-only" for p in paths[0]))
-        self.assertFalse(any(p.parent.name == "full-5.10" for p in paths[0]))
-        self.assertTrue(any(p.parent.name == "full-5.10" for p in paths[1]))
-        self.assertFalse(any(p.parent.name == "kernel-only" for p in paths[1]))
+        sources = [builder.frida_source(c) for c in configs]
+        self.assertEqual([s["profile"] for s in sources], ["kernel-only", "full-5.10"])
+        self.assertNotEqual(sources[0]["commit"], sources[1]["commit"])
+        self.assertEqual(sources[0]["repository"], sources[1]["repository"])
+        self.assertEqual(builder.frida_source(builder.configuration({}))["profile"], "common")
+        for source in sources:
+            self.assertRegex(source["commit"], r"^[0-9a-f]{40}$")
+            self.assertIn("LanceaKing/frida-core", source["repository"])
+
+    def test_fork_source_rejects_unpinned_revision(self):
+        c = builder.configuration({})
+        lock = builder.read_json(builder.ROOT / "sources/frida-17.26.2.json")
+        lock["core"]["profiles"]["common"] = "main"
+        with mock.patch.object(builder, "read_json", return_value=lock):
+            with self.assertRaisesRegex(ValueError, "full commit SHA"):
+                builder.frida_source(c)
+
+    def test_missing_fork_version_has_no_upstream_fallback(self):
+        c = builder.configuration({"frida_version": "99.0.0"})
+        with self.assertRaisesRegex(ValueError, "No pinned fork"):
+            builder.frida_source(c)
 
     def test_full_510_rejects_unreviewed_targets(self):
         preset = builder.read_json(builder.ROOT / "presets/pixel-7a-android13-5.10-full.json")

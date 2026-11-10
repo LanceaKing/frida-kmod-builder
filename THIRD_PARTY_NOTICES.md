@@ -1,6 +1,7 @@
 # Third-party components
 
-The scripts download upstream components during each build.
+The scripts download pinned forks and upstream dependencies during each build.
+Fork changes retain the upstream licenses; see [source provenance](docs/FORKS.md).
 This repository does not include their source or binary files.
 The license for this repository applies only to its original scripts and documentation.
 

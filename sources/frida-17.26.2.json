@@ -1,0 +1,32 @@
+{
+  "version": "17.26.2",
+  "core": {
+    "repository": "https://github.com/LanceaKing/frida-core.git",
+    "upstream_commit": "2a41a960fe9b7fc0ccc85003e4f31f0caeec4d8d",
+    "profiles": {
+      "common": "fdc9da5ab29ac5bbe32c8b68ff7d3cc43c3ae230",
+      "full-5.10": "32e5a832a5fd837456f6341f53ec075925683925",
+      "kernel-only": "7a888d58a69b0141969762483af214c3ac43c2ff"
+    }
+  },
+  "java_bridge": {
+    "repository": "https://github.com/LanceaKing/frida-java-bridge.git",
+    "version": "7.0.13",
+    "commit": "1245d0bbd84f68f3337e9f7a82316cef8d42294d",
+    "archive": "https://codeload.github.com/LanceaKing/frida-java-bridge/tar.gz/1245d0bbd84f68f3337e9f7a82316cef8d42294d"
+  },
+  "tools": {
+    "repository": "https://github.com/frida/frida-tools.git",
+    "commit": "6bbae44a5df871524619337130471871ccc386dd",
+    "wheel_url": "https://github.com/LanceaKing/frida-kmod-builder/releases/download/17.26.2-pixel-5.10.3/frida_tools-14.13.1.dev4-py3-none-any.whl",
+    "wheel_sha256": "c0ed3dda8c4b89e7d185692262a075529bb09ae8a60584bfc15732793f547171",
+    "version": "14.13.1-dev.4",
+    "dependencies": "sources/tools-17.26.2"
+  },
+  "server": {
+    "url": "https://github.com/LanceaKing/frida-kmod-builder/releases/download/17.26.2-pixel-5.10.3/frida-server-17.26.2-android-arm64.xz",
+    "sha256": "8cb8a3a076339ed7c3cf6581e1ed5e572d4d9d75b687e4a6a91386456b872097",
+    "binary_sha256": "b6674025881fe799baadd3a6ab4c89091bc6d52a86e43e698c4fb625726200ee",
+    "core_commit": "32e5a832a5fd837456f6341f53ec075925683925"
+  }
+}

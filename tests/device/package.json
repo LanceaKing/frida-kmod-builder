@@ -1,5 +1,7 @@
 {
   "private": true,
   "type": "module",
-  "dependencies": {"frida-java-bridge": "7.0.13"}
+  "dependencies": {
+    "frida-java-bridge": "https://codeload.github.com/LanceaKing/frida-java-bridge/tar.gz/1245d0bbd84f68f3337e9f7a82316cef8d42294d"
+  }
 }

@@ -31,24 +31,37 @@ The existing JVM and Dalvik disposal paths remain unchanged.
 The thread-list lock requirement comes from [ART's `ThreadList::ForEach` declaration](https://android.googlesource.com/platform/art/+/refs/tags/android-13.0.0_r75/runtime/thread_list.h#140).
 The inspection reads each frame's method through [ART's `StackVisitor::GetMethod`](https://android.googlesource.com/platform/art/+/refs/tags/android-13.0.0_r75/runtime/stack.cc#104).
 
-## Apply the bridge patch
+## Inline ART patch restoration race
+
+Fork migration testing exposed another unload race on 2026-11-10. Settings PID 9897 exited with SIGSEGV after script unload. Its `x8` jump target was `0x90003408540006c0`; the fault address had the top byte removed. These eight bytes exactly match the original instructions at `libart.so` offsets `0x395650` and `0x395654`, inside `StackVisitor::WalkStack` on the tested ART build (`289d75599f6112d5757113220599e90b`).
+
+The arm64 inline redirect stores its trampoline address at that location. Restoring the original multi-instruction region while a managed thread executes the redirect can make the thread load instruction bytes as its branch address. Draining replacement JNI frames does not protect unrelated stack walks.
+
+The fork wraps global patch restoration in ART `SuspendAll` / `ResumeAll`. It restores the redirects and releases their trampolines while managed threads are suspended. The existing non-ART path is unchanged. This is a ten-line addition to `lib/android.js`; it preserves the earlier replacement-frame drain.
+
+## Install the fork bridge
 
 Run these commands from the builder repository on the host:
 
 ```sh
 npm ci --prefix tests/device
-patch -p1 -d tests/device/node_modules/frida-java-bridge < patches/frida-java-bridge/7.0.13/0001-drain-art-replacements-on-unload.patch
 ```
 
-For a separate script project, install bridge version 7.0.13 there and apply the same patch to its package directory.
-Recompile that project's scripts after applying the patch.
-An npm reinstall replaces the patched files. Apply the patch again after a clean install.
+For a separate script project, pin the fork commit and keep its lock file:
+
+```sh
+npm install --save-exact https://codeload.github.com/LanceaKing/frida-java-bridge/tar.gz/1245d0bbd84f68f3337e9f7a82316cef8d42294d
+```
+
+Recompile that project's scripts after installation. Clean installs retain the fix.
+The [bundled tools wheel](FORKS.md) also bundles this bridge for the standard CLI.
 Keep the [official server startup](INSTALL.md#full-mode-android-app-connection).
 
 ## Reproduce the concurrent unload test
 
 `TeardownWorkload.java` runs four Java threads independently of the Frida script.
 They repeatedly call `System.identityHashCode` through reflection and compare its return value with the original value.
+They also capture Java stack traces to exercise ART inline redirects during unload.
 The host unloads the hook while those threads run, observes process survival, and reads their final result.
 A unique output path prevents a previous run from supplying a false success.
 The runner fails on a JavaScript error, a changed return value, an early process exit, or a cleanup timeout.
@@ -99,10 +112,14 @@ The deployed server SHA256 remained `77eecc8c7145793cd162bef0cfdca5ce0e044c46782
 
 The patch applies to a clean bridge 7.0.13 package and reproduces all three tested source files exactly.
 The 30 repository tests, Python and JavaScript syntax checks, Java fixture compilation, Android C syntax check, and workflow lint passed locally.
-CI also applies the bridge patch to a fresh dependency install.
+CI installs the pinned fork bridge from the lock file and checks its JavaScript syntax.
 These results cover the stated device and script-unload path. They do not establish every possible interleaving or compatibility with another ART build.
 
 Local diagnosis evidence is in `.work/teardown-investigation-20261110/`.
 Candidate evidence is in `.work/teardown-candidate-20261110/`.
 Final acceptance evidence is in `.work/teardown-acceptance-20261110/`.
 The repository excludes device logs and binaries.
+
+## Fork follow-up acceptance
+
+The [fork migration record](FORKS.md) supersedes the earlier acceptance for current installs. The ten-line inline-restoration correction passed 50 concurrent unloads with Java stack walking on the fork full module and 30 Settings spawns using the final pinned bridge, including 10 on that module. No new tombstone appeared after the fix. The server entrypoints and SELinux helper remain unchanged.

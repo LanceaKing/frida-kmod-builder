@@ -21,6 +21,8 @@ public final class TeardownWorkload {
           while (running && System.nanoTime() < deadline) {
             int actual = ((Integer)method.invoke(null, object)).intValue();
             if (actual != expected) failures.incrementAndGet();
+            // Exercise ART stack walking while its inline redirects are removed.
+            if (new Throwable().getStackTrace().length == 0) failures.incrementAndGet();
             calls.incrementAndGet();
           }
         } catch (Throwable e) { failures.incrementAndGet(); }

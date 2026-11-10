@@ -53,7 +53,7 @@ Linux 5.10 缺少新版 Frida 的进程线程注入接口，因此该预设选�
 
 ## 调整其他参数
 
-`frida_version` 同时选择源码、GumJS devkit 和 server 的版本。
+`frida_version` 必须有对应的 fork 源码锁文件，目前为 `17.26.2`；它也选择官方 GumJS devkit 的版本。
 `rust_toolchain` 选择 Rust 编译器。`module_name` 修改 `.ko` 名称。
 `include_server` 决定是否将同版本 Android arm64 server 放入产物。
 完整参数表见[英文 README](../README.md#inputs)。
@@ -62,7 +62,7 @@ Linux 5.10 缺少新版 Frida 的进程线程注入接口，因此该预设选�
 失败时可下载 diagnostics 查看日志。
 这是公开仓库，只填写可公开的下载地址。
 构建会检查 ELF 架构、版本字符串及配置是否变化，但不会在手机上加载模块。
-Frida 17.26.2 的 `CONFIG_SYSVIPC` 条件编译修复会随产物一起提供，详见[补丁说明](../patches/README.md)。
+构建固定使用官方仓库的 [fork 提交](FORKS.md)，不再临时应用本地补丁。`frida-sources.json` 记录源码提交和 server 校验值；两个 Pixel 5.10 preset 默认包含修复后的 fork server。
 安装流程见 [INSTALL.md](INSTALL.md)。
 
 ## 构建缓存

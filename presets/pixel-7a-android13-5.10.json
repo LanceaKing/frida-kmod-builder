@@ -9,5 +9,5 @@
   "kernel_clang_url": "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/425c8149f17c8d9914bf690b4d5abe45a13fb993/clang-r450784e.tar.gz",
   "agent_mode": "kernel-only",
   "frida_version": "17.26.2",
-  "include_server": "false"
+  "include_server": "true"
 }

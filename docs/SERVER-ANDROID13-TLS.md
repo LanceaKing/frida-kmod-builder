@@ -11,7 +11,7 @@ It places the Bionic scratch area at three quarters of that block, leaving 2 KiB
 The target libc reads `bionic_systrace_disabled` at offset `0x2fa1` from the Bionic TLS pointer.
 That read falls outside the allocated block and crashes the injected Calculator thread before its agent connects.
 
-`patches/17.26.2/server/0001-android-bionic-tls-capacity.patch` increases the Android TLS block to 64 KiB.
+[Android Bionic TLS capacity](https://github.com/LanceaKing/frida-core/commit/9861f4546a5bd42369416da1efb4d021878e35e0) increases the Android TLS block to 64 KiB.
 The existing layout then gives each scratch area 16 KiB.
 The allocator, range registration, and cleanup share `TLS_SIZE`, so they use the same new size.
 The non-Android branch keeps its original size. This is a capacity correction for the observed Android 13 layout, not universal Bionic compatibility.
@@ -21,24 +21,24 @@ The injector starts an asynchronous socket accept before it writes the loader an
 If either operation throws, the accept can remain pending after the attach call returns.
 Three device probes each left one abstract Unix listener and one server file descriptor behind.
 
-`patches/17.26.2/server/0002-kernel-injection-connection-cleanup.patch` gives that connection attempt its own cancellation object.
+[Injection connection cleanup](https://github.com/LanceaKing/frida-core/commit/fdc9da5ab29ac5bbe32c8b68ff7d3cc43c3ae230) gives that connection attempt its own cancellation object.
 The injector cancels the attempt in `finally`, including when a write, spawn, or connection wait fails.
 An accepted connection also closes if its agent handshake fails before ownership transfers to the caller.
 The patch preserves the original error and leaves successful agent connections open.
 
 ## Source and build
 
-The source is `frida-core` tag `17.26.2`, commit `2a41a960fe9b7fc0ccc85003e4f31f0caeec4d8d`.
+The fork source is `LanceaKing/frida-core` commit `32e5a832a5fd837456f6341f53ec075925683925`, based on official tag `17.26.2` (`2a41a960fe9b7fc0ccc85003e4f31f0caeec4d8d`).
+The [source lock](../sources/frida-17.26.2.json) pins all components and release hashes.
 Its `releng` submodule pins SDK release `20261106` and requires Android NDK r29.
 Use Python 3.10 or newer. The validation build uses Python 3.12 and NDK `29.0.14206865` on macOS arm64.
 
 Run these commands from the builder repository. Use a clean source directory and set the actual NDK path.
 
 ```sh
-git clone --branch 17.26.2 --depth 1 https://github.com/frida/frida-core.git .work/frida-server-source
+git clone https://github.com/LanceaKing/frida-core.git .work/frida-server-source
+git -C .work/frida-server-source checkout --detach 32e5a832a5fd837456f6341f53ec075925683925
 git -C .work/frida-server-source submodule update --init --recursive --depth 1
-git -C .work/frida-server-source apply ../../patches/17.26.2/server/0001-android-bionic-tls-capacity.patch
-git -C .work/frida-server-source apply ../../patches/17.26.2/server/0002-kernel-injection-connection-cleanup.patch
 cd .work/frida-server-source
 export PYTHON=python3.12
 export ANDROID_NDK_ROOT=/path/to/android-ndk-r29
@@ -51,7 +51,7 @@ The server keeps protocol version 17.26.2. Identify the custom build by its SHA2
 
 ## Device acceptance
 
-The current server includes both patches and has SHA256 `77eecc8c7145793cd162bef0cfdca5ce0e044c46782935a51a09c8d91800b813`.
+The pre-fork acceptance server includes both patches and has SHA256 `77eecc8c7145793cd162bef0cfdca5ce0e044c46782935a51a09c8d91800b813`.
 The phone reported version 17.26.2 and the same SHA256.
 The generated C source uses 64 KiB for allocation, range registration, and release.
 The earlier TLS-only server has SHA256 `e43099154b1532f689fa6929089a506ac5366ef7289f4cb250d7bbc9f33453c6` and contains the connection cleanup defect.
@@ -66,10 +66,10 @@ Calculator attach, Native and Java hooks, ten attach/unload/detach cycles, spawn
 Invalid and exited PIDs returned `ProcessNotFoundError`. Terminating an attached target delivered `process-terminated` without a crash report.
 Module allocation, writes, target thread creation, and agent messages confirmed the official kernel injection route.
 
-The current server adds the connection cleanup patch to the TLS correction. The SELinux helper and injector entrypoints are unchanged.
+That acceptance server adds the connection cleanup patch to the TLS correction. The SELinux helper and injector entrypoints are unchanged.
 Extended tests confirm that the pending-listener leak is fixed across 20 target exits and that other Apps reach both hooks.
 The later Settings and Calculator unload crashes required a separate [Java bridge lifetime correction](JAVA-TEARDOWN.md).
 The final device matrix passed with that bridge patch and this unchanged server binary.
-Apply the bridge patch to each script project. Neither server patch changes the Java bridge bundled into user scripts.
+Install the pinned fork bridge in each script project. See [fork migration validation](FORKS.md) for the rebuilt server. Neither server patch changes the Java bridge bundled into user scripts.
 Follow the [direct startup commands](INSTALL.md#full-mode-android-app-connection), using port 27043 for Apps and port 27042 for Barebone PID 0.
 See the [full-mode acceptance record](PIXEL-5.10-FULL.md) for the kernel regression, policy hashes, resource observations, and remaining scope limits.
