@@ -24,3 +24,12 @@ The patch locates `kallsyms_lookup_name` relative to the exported `kimage_vaddr`
 The existing ARM64 kernel source defines `kimage_vaddr` as a relocated pointer to `_text`.
 Selected glue functions use `__nocfi` for calls to unexported functions that lack legacy CFI jump-table entries, and for the module event callback into the Rust agent.
 The build still enables CFI and LTO and checks the original CRCs for every imported export. No runtime address parameter or device setting change is needed.
+
+`0004-linux-entrypoint-abi.patch` aligns the Linux Rust entry point with the C wrapper's zero-argument declaration.
+The Rust function obtains the module range through the existing `kernel::own_range()` wrapper.
+The macOS entry point keeps its arguments. This corrects a separate ABI defect, not the observed read-only-memory panic.
+
+The builder also removes `SHF_GNU_RETAIN` from the prelinked agent before kbuild links the C wrapper.
+This linker flag overlaps Linux's internal `SHF_RO_AFTER_INIT` flag.
+The final module must contain no such input flags, and `.bss` must remain writable, allocated, and NOBITS.
+The kernel still applies its own protections to `.data..ro_after_init` and `__jump_table` during loading.

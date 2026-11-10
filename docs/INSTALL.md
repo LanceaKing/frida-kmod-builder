@@ -1,5 +1,10 @@
 # Load the Frida kernel module
 
+Do not reload the original Pixel 7a Android 13 artifact after a panic.
+Builds from `d5f6682` and earlier contain an ELF flag that can make mutable memory read-only.
+The revised build removes that flag, but runtime validation remains incomplete.
+Read the [incident report](https://github.com/LanceaKing/frida-kmod-builder/blob/main/docs/PIXEL-5.10-PANIC.md) first.
+
 Use a rooted Android arm64 device with the exact kernel recorded in `build-info.json`.
 KernelSU can provide root access, including in its runtime jailbreak mode.
 The root profile must permit module loading and access to `/dev/frida`.
@@ -38,6 +43,7 @@ frida -H 127.0.0.1:27042 -p 0
 
 The server exposes the kernel session through the local ADB connection.
 If module loading fails, read the kernel log before changing inputs.
+If the device reboots, stop loading the module and collect the retained crash log with `adb bugreport`.
 If access to `/dev/frida` fails, inspect the server's SELinux domain and denial messages.
 
 ## Stop the session

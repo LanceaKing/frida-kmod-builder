@@ -1,12 +1,72 @@
 import importlib.util
 from pathlib import Path
 import tempfile
+import struct
 import unittest
 from unittest import mock
 
 SPEC = importlib.util.spec_from_file_location("builder", Path(__file__).parents[1] / "scripts/build.py")
 builder = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(builder)
+
+
+def elf_fixture(bss_flags=3, extra_name=None):
+    entries = [("", 0, 0), (".shstrtab", 3, 0), (".text", 1, 0x200006), (".bss", 8, bss_flags)]
+    if extra_name:
+        entries.append((extra_name, 1, 3))
+    names = b"\0" + b"".join(name.encode() + b"\0" for name, _, _ in entries[1:])
+    table_offset = (64 + len(names) + 7) & ~7
+    blob = bytearray(table_offset + 64 * len(entries))
+    struct.pack_into("<16sHHIQQQIHHHHHH", blob, 0,
+                     b"\x7fELF\x02\x01\x01", 1, 183, 1, 0, 0, table_offset,
+                     0, 64, 0, 0, 64, len(entries), 1)
+    blob[64:64 + len(names)] = names
+    for i, (name, kind, flags) in enumerate(entries):
+        payload_offset = 64 if kind == 3 else 0
+        payload_size = len(names) if kind == 3 else (4096 if kind == 8 else 0)
+        struct.pack_into("<IIQQQQIIQQ", blob, table_offset + i * 64,
+                         names.index(name.encode() + b"\0"), kind, flags, 0,
+                         payload_offset, payload_size, 0, 0, 8, 0)
+    return bytes(blob)
+
+
+class ModuleSectionTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name) / "agent.o"
+
+    def test_strips_only_retain_and_preserves_nobits(self):
+        before = elf_fixture(0x200003)
+        self.path.write_bytes(before)
+        changes = builder.strip_agent_retain(self.path)
+        self.assertEqual([c["section"] for c in changes], [".text", ".bss"])
+        after = self.path.read_bytes()
+        expected = bytearray(before)
+        for section in builder.elf_sections(before):
+            if section["flags"] & 0x200000:
+                struct.pack_into("<Q", expected, section["flags_offset"], section["flags"] & ~0x200000)
+        self.assertEqual(after, expected)
+        self.assertEqual(builder.inspect_module_sections(self.path)["bss"], "writable allocated NOBITS")
+        self.assertEqual(builder.strip_agent_retain(self.path), [])
+
+    def test_rejects_the_panic_causing_bss_flag(self):
+        self.path.write_bytes(elf_fixture(0x200003))
+        with self.assertRaisesRegex(ValueError, "Unsafe SHF_GNU_RETAIN.*bss"):
+            builder.inspect_module_sections(self.path)
+
+    def test_never_modifies_kernel_owned_sections(self):
+        for name in (".modinfo", ".data..ro_after_init", "__jump_table"):
+            before = elf_fixture(0x200003, name)
+            self.path.write_bytes(before)
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "prelinked agent"):
+                builder.strip_agent_retain(self.path)
+            self.assertEqual(self.path.read_bytes(), before)
+
+    def test_rejects_invalid_section_tables(self):
+        for blob in (b"", bytes(64), elf_fixture()[:100]):
+            with self.subTest(size=len(blob)), self.assertRaises(ValueError):
+                builder.elf_sections(blob)
 
 
 class ConfigurationTests(unittest.TestCase):

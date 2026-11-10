@@ -2,6 +2,11 @@
 
 [中文说明](docs/README.zh-CN.md) · [Run a build](https://github.com/LanceaKing/frida-kmod-builder/actions/workflows/build.yml)
 
+Do not load artifacts from commit `d5f6682` or earlier on the Pixel 7a Android 13 preset.
+A device test caused a kernel panic during agent startup.
+The builder now removes the conflicting ELF flag, but the revised module still needs runtime validation.
+Read the [incident report](docs/PIXEL-5.10-PANIC.md) before using this preset.
+
 Build `frida-agent.ko` for an Android arm64 kernel with GitHub Actions.
 Select the kernel family, complete kernel release, Frida version, and source artifacts in the **Run workflow** form.
 The workflow builds the upstream [Frida Barebone Linux agent](https://github.com/frida/frida-core/tree/17.26.2/src/barebone/agent/linux).

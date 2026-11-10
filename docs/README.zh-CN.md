@@ -1,5 +1,9 @@
 # Frida 内核模块构建
 
+请勿在 Pixel 7a Android 13 预设上加载 `d5f6682` 及更早提交的产物。
+实机加载导致了内核 panic。构建器现已移除冲突的 ELF 标记，但修订版尚未通过实机运行验证。
+使用此前请阅读[故障说明](PIXEL-5.10-PANIC.md)。
+
 本仓库通过 GitHub Actions 为 Android arm64 构建 `frida-agent.ko`。
 在 **Actions → Build Frida kernel module → Run workflow** 中填写参数即可启动。
 构建完成后，在该次运行页面的 **Artifacts** 中下载产物。

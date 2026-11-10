@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tarfile
@@ -122,6 +123,63 @@ def sha256(path):
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
         return digest.hexdigest()
+
+
+def elf_sections(blob):
+    """Read ordinary ELF64 section headers without interpreting section payloads."""
+    require(len(blob) >= 64 and blob[:6] == b"\x7fELF\x02\x01",
+            "Expected a little-endian ELF64 object.")
+    header = struct.unpack_from("<16sHHIQQQIHHHHHH", blob)
+    require(header[1:3] == (1, 183), "Expected a relocatable AArch64 object.")
+    offset, size, count, names_index = header[6], header[11], header[12], header[13]
+    require(size == 64 and count > 0 and 0 < names_index < count,
+            "Unsupported ELF section table.")
+    require(offset >= 64 and offset + size * count <= len(blob), "Truncated ELF section table.")
+    headers = [struct.unpack_from("<IIQQQQIIQQ", blob, offset + i * size) for i in range(count)]
+    names_header = headers[names_index]
+    require(names_header[1] == 3 and names_header[4] + names_header[5] <= len(blob),
+            "Invalid ELF section name table.")
+    names = blob[names_header[4]:names_header[4] + names_header[5]]
+    sections = []
+    for i, section in enumerate(headers):
+        require(section[0] < len(names), "Invalid ELF section name offset.")
+        end = names.find(b"\0", section[0])
+        require(end != -1, "Unterminated ELF section name.")
+        require(section[1] == 8 or section[4] + section[5] <= len(blob),
+                "Truncated ELF section payload.")
+        sections.append({"name": names[section[0]:end].decode("ascii"),
+                         "type": section[1], "flags": section[2],
+                         "flags_offset": offset + i * size + 8})
+    return sections
+
+
+def strip_agent_retain(path):
+    """Remove a userspace linker flag before kbuild adds kernel-owned sections."""
+    blob = bytearray(path.read_bytes())
+    sections = elf_sections(blob)
+    kernel_sections = {".modinfo", ".gnu.linkonce.this_module", ".data..ro_after_init", "__jump_table"}
+    require(not any(s["name"] in kernel_sections for s in sections),
+            "Only sanitize the prelinked agent, before linking the kernel wrapper.")
+    changed = []
+    for section in sections:
+        if section["flags"] & 0x200000:
+            flags = section["flags"] & ~0x200000
+            struct.pack_into("<Q", blob, section["flags_offset"], flags)
+            changed.append({"section": section["name"], "before": section["flags"], "after": flags})
+    # The prelink uses no garbage collection. Retention is already complete.
+    # Linux interprets SHF_GNU_RETAIN as its internal SHF_RO_AFTER_INIT bit.
+    path.write_bytes(blob)
+    return changed
+
+
+def inspect_module_sections(path):
+    sections = elf_sections(path.read_bytes())
+    retained = [s["name"] for s in sections if s["flags"] & 0x200000]
+    require(not retained, f"Unsafe SHF_GNU_RETAIN in kernel module sections: {retained}")
+    bss = next((s for s in sections if s["name"] == ".bss"), None)
+    require(bss is not None and bss["type"] == 8 and bss["flags"] & 3 == 3,
+            "Expected a writable, allocated NOBITS .bss section.")
+    return {"gnu_retain": "absent", "bss": "writable allocated NOBITS"}
 
 
 def download(url, path):
@@ -407,14 +465,23 @@ def build():
             offset = sources["symbol_bootstrap"]["kallsyms_lookup_name_offset"]
             definitions += ["-DFRIDA_GKI_TRIMMED_EXPORTS", f"-DFRIDA_KALLSYMS_LOOKUP_OFFSET={offset}UL"]
         extra_args += ["EXTRA_CFLAGS=" + " ".join(definitions)]
-    run("make", "-C", WORK / "frida-core/src/barebone/agent/linux",
+    agent_dir = WORK / "frida-core/src/barebone/agent/linux"
+    make_args = ["make", "-C", agent_dir,
         f"-j{min(os.cpu_count() or 2, 8)}", "ARCH=arm64", "BITS=64",
         f"MODULE_NAME={c['module_name']}", f"FRIDA_SDK={WORK / 'sdk'}",
         f"GUMJS_DEVKIT_DIR={WORK / 'gumjs-devkit'}", "AGENT_CC=/usr/bin/clang-19",
         "AGENT_LD=aarch64-linux-gnu-ld", "AGENT_AR=aarch64-linux-gnu-ar",
         "AGENT_NM=aarch64-linux-gnu-nm", "AGENT_OBJCOPY=aarch64-linux-gnu-objcopy",
         f"KDIR={WORK / 'kernel-source'}", f"KOUT={WORK / 'kernel-prepared'}",
-        f"LLVM={clang_bin}/", *extra_args, env=env)
+        f"LLVM={clang_bin}/", *extra_args]
+    prelinked = "frida-agent-prelinked.o.bin"
+    run(*make_args, prelinked, env=env)
+    changes = strip_agent_retain(agent_dir / prelinked)
+    write_json(WORK / "agent-section-flags.json", changes)
+    print("Removed SHF_GNU_RETAIN before kbuild:", changes, flush=True)
+    # Upstream's agent prerequisite is phony. Keep the sanitized object rather
+    # than rebuilding it when entering the separate kbuild stage.
+    run(*make_args, f"--old-file={prelinked}", "modules", env=env)
     # Recheck after kbuild: configuration regeneration must not change the target ABI.
     inspect_kernel(WORK / "kernel-prepared", c["kernel_release"])
     require(sha256(WORK / "kernel-prepared/.config") == sources["kernel_config_sha256"],
@@ -426,6 +493,7 @@ def package():
     sources = read_json(WORK / "sources.json")
     DIST.mkdir(exist_ok=True)
     module = DIST / f"{c['module_name']}.ko"
+    section_validation = inspect_module_sections(WORK / "frida-core/src/barebone/agent/linux" / module.name)
     shutil.copy2(WORK / "frida-core/src/barebone/agent/linux" / module.name, module)
     vermagic = run("modinfo", "-F", "vermagic", module, capture=True).strip()
     require(vermagic.split()[0] == c["kernel_release"], "The output module vermagic does not match kernel_release.")
@@ -462,7 +530,8 @@ def package():
         "run_url": f"https://github.com/{os.environ.get('GITHUB_REPOSITORY', '')}/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}",
         "features": {"kernel_session": True, "process_thread_injection": c["agent_mode"] == "full",
                      "automatic_process_hooks": c["agent_mode"] == "full"},
-        "validation": {"elf": "AArch64 relocatable", "vermagic": "matched", "device_load_test": "not performed"},
+        "validation": {"elf": "AArch64 relocatable", "vermagic": "matched",
+                       "sections": section_validation, "device_load_test": "not performed"},
     }
     write_json(DIST / "build-info.json", provenance)
     (DIST / "SHA256SUMS").write_text("".join(f"{sha256(p)}  {p.name}\n" for p in sorted(DIST.iterdir()) if p.is_file() and p.name != "SHA256SUMS"))
