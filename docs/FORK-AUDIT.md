@@ -61,4 +61,13 @@ The kernel ABI workflow compiles full and kernel-only glue against pinned Androi
 
 The 5.10 process path requires the GKI configuration (`CONFIG_SCHED_AUTOGROUP=n`). Optional MTE, seccomp and cgroup helpers are resolved only when configured. The target headers determine whether secondary TLS and SCTLR state are present. Missing required runtime symbols fail initialization instead of using guessed offsets. Outside 5.10, process injection still requires the upstream `user_mode_thread` interface; passing the C compile matrix alone does not establish process-injection support for a kernel that lacks it. This does not promise support for arbitrary vendor modifications.
 
-Validation of the new candidate is pending. Previous Pixel results describe earlier source pins.
+The core source is pinned to `2933e5e4` on `compat/17.26.2-full-5.10`. The branch name is historical; source selection no longer uses the Pixel model or an exact 5.10 patch level. All official upstream branches remain in the fork.
+
+Validation for this source:
+
+- 37 builder tests pass.
+- The [ABI matrix](https://github.com/LanceaKing/frida-kmod-builder/actions/runs/42883495167) passes all eight pinned kernel source configurations in both modes. It includes the September 2021 Android 12 GKI release as well as current Android 12/13 5.10 sources.
+- Complete modules pass the [5.10 full build](https://github.com/LanceaKing/frida-kmod-builder/actions/runs/42883002068), [5.10 kernel-only build](https://github.com/LanceaKing/frida-kmod-builder/actions/runs/42883008265), and [6.1 full build](https://github.com/LanceaKing/frida-kmod-builder/actions/runs/42883015408). Downloaded module hashes and source locks were verified.
+- [PR #3](https://github.com/LanceaKing/frida-kmod-builder/pull/3) records the current device acceptance. Runtime coverage is limited to the available Pixel 7a GKI 5.10 device; it does not establish device acceptance for the other matrix kernels.
+
+The matrix compiles kernel-facing C code, not a bootable kernel or a universally loadable module. Each installed module still needs the exact target build artifacts. Published release binaries keep their original source pins until a new release is built and validated.
