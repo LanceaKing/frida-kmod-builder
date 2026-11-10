@@ -12,7 +12,7 @@ index 279faa0..5eeb646 100644
  
  # Two structures the reparenting path reaches into lost a member upstream, and
 diff --git a/src/barebone/agent/linux/frida-kmod.c b/src/barebone/agent/linux/frida-kmod.c
-index 8e3a754..300bb1c 100644
+index b1641ec..80d78ec 100644
 --- a/src/barebone/agent/linux/frida-kmod.c
 +++ b/src/barebone/agent/linux/frida-kmod.c
 @@ -8,7 +8,16 @@
@@ -613,7 +613,7 @@ index 8e3a754..300bb1c 100644
    frida_show_map_addr = (void *) frida_kmod_find_symbol ("show_map");
    frida_show_smap_addr = (void *) frida_kmod_find_symbol ("show_smap");
    frida_proc_fill_cache_addr = (void *) frida_kmod_find_symbol ("proc_fill_cache");
-@@ -1240,22 +1355,122 @@ frida_kmod_install_hooks (void)
+@@ -1240,22 +1355,139 @@ frida_kmod_install_hooks (void)
    frida_proc_fd_instantiate_addr = (void *) frida_kmod_find_symbol ("proc_fd_instantiate");
    frida_proc_fdinfo_instantiate_addr = (void *) frida_kmod_find_symbol ("proc_fdinfo_instantiate");
  
@@ -666,6 +666,23 @@ index 8e3a754..300bb1c 100644
 +  {
 +    pr_err ("frida: missing hook symbol: proc_fdinfo_instantiate\n");
 +    return -ENOENT;
++  }
++  {
++    void * targets[] = {frida_show_map_addr, frida_show_smap_addr, frida_proc_fill_cache_addr, frida_sys_prctl_addr, frida_proc_pid_status_addr, frida_do_task_stat_addr, frida_release_task_addr};
++    unsigned int i;
++    for (i = 0; i != ARRAY_SIZE (targets); i++)
++    {
++      unsigned long address = (unsigned long) targets[i];
++      unsigned long first = address & PAGE_MASK;
++      unsigned int pages = (((address + 31) & PAGE_MASK) - first) / PAGE_SIZE + 1;
++      void * alias = frida_kmod_remap_writable (first, pages);
++      if (alias == NULL)
++      {
++        pr_err ("frida: cannot map hook page at index %u\n", i);
++        return -ENOMEM;
++      }
++      frida_kmod_unmap_writable (alias);
++    }
 +  }
 +  frida_op_worker = kthread_run (frida_op_worker_fn, NULL, "frida-op");
 +  if (IS_ERR (frida_op_worker))
@@ -750,7 +767,7 @@ index 8e3a754..300bb1c 100644
  }
  
  static void
-@@ -1263,19 +1478,36 @@ frida_remove_cloak_hooks (void)
+@@ -1263,19 +1495,36 @@ frida_remove_cloak_hooks (void)
  {
    struct frida_cloak * c, * next;
  
@@ -797,7 +814,7 @@ index 8e3a754..300bb1c 100644
  
    spin_lock (&frida_cloaks_lock);
    list_for_each_entry_safe (c, next, &frida_cloaks, node)
-@@ -1318,7 +1550,7 @@ frida_proc_fill_cache (struct file * file,
+@@ -1318,7 +1567,7 @@ frida_proc_fill_cache (struct file * file,
                         struct dir_context * ctx,
                         const char * name,
                         unsigned int len,
@@ -806,7 +823,7 @@ index 8e3a754..300bb1c 100644
                         struct task_struct * task,
                         const void * ptr)
  {
-@@ -1359,6 +1591,8 @@ frida_sys_prctl (const struct pt_regs * regs)
+@@ -1359,6 +1608,8 @@ frida_sys_prctl (const struct pt_regs * regs)
    tgid = current->tgid;
    uargs = (void __user *) FRIDA_SYSCALL_ARG2 (regs);
  
@@ -815,7 +832,7 @@ index 8e3a754..300bb1c 100644
    if (op == FRIDA_CONTROL_OP_PING)
      return FRIDA_CONTROL_MAGIC;
  
-@@ -1526,7 +1760,12 @@ frida_call_on_kthread (long (* fn) (void * arg),
+@@ -1526,7 +1777,12 @@ frida_call_on_kthread (long (* fn) (void * arg),
    init_completion (&call.done);
  
    mutex_lock (&frida_op_mutex);
@@ -829,7 +846,7 @@ index 8e3a754..300bb1c 100644
    wake_up (&frida_op_wq);
    wait_for_completion (&call.done);
    mutex_unlock (&frida_op_mutex);
-@@ -1541,12 +1780,12 @@ frida_op_worker_fn (void * unused)
+@@ -1541,12 +1797,12 @@ frida_op_worker_fn (void * unused)
    {
      struct frida_kthread_call * call;
  
@@ -845,12 +862,16 @@ index 8e3a754..300bb1c 100644
      call->result = call->fn (call->arg);
      complete (&call->done);
    }
-@@ -1559,7 +1798,12 @@ frida_do_alloc (void * data)
+@@ -1559,7 +1815,16 @@ frida_do_alloc (void * data)
  {
    const struct frida_alloc_args * args = data;
  
 -  return frida_kmod_process_alloc (args->pid, args->size, args->prot);
-+  long result = frida_kmod_process_alloc (args->pid, args->size, args->prot);
++  long result;
++
++  if (trace_process_ops)
++    pr_info ("frida: process op=alloc pid=%u received\n", args->pid);
++  result = frida_kmod_process_alloc (args->pid, args->size, args->prot);
 +
 +  if (trace_process_ops)
 +    pr_info ("frida: process op=alloc pid=%u result=%ld tid=%ld\n",
@@ -859,12 +880,16 @@ index 8e3a754..300bb1c 100644
  }
  
  static long
-@@ -1567,7 +1811,12 @@ frida_do_free (void * data)
+@@ -1567,7 +1832,16 @@ frida_do_free (void * data)
  {
    const struct frida_free_args * args = data;
  
 -  return frida_kmod_process_free (args->pid, args->address, args->size);
-+  long result = frida_kmod_process_free (args->pid, args->address, args->size);
++  long result;
++
++  if (trace_process_ops)
++    pr_info ("frida: process op=free pid=%u received\n", args->pid);
++  result = frida_kmod_process_free (args->pid, args->address, args->size);
 +
 +  if (trace_process_ops)
 +    pr_info ("frida: process op=free pid=%u result=%ld tid=%ld\n",
@@ -873,12 +898,16 @@ index 8e3a754..300bb1c 100644
  }
  
  static long
-@@ -1575,7 +1824,12 @@ frida_do_write (void * data)
+@@ -1575,7 +1849,16 @@ frida_do_write (void * data)
  {
    const struct frida_xfer_job * job = data;
  
 -  return frida_kmod_process_write (job->pid, job->address, job->buffer, job->size);
-+  long result = frida_kmod_process_write (job->pid, job->address, job->buffer, job->size);
++  long result;
++
++  if (trace_process_ops)
++    pr_info ("frida: process op=write pid=%u received\n", job->pid);
++  result = frida_kmod_process_write (job->pid, job->address, job->buffer, job->size);
 +
 +  if (trace_process_ops)
 +    pr_info ("frida: process op=write pid=%u result=%ld tid=%ld\n",
@@ -887,12 +916,16 @@ index 8e3a754..300bb1c 100644
  }
  
  static long
-@@ -1583,7 +1837,12 @@ frida_do_read (void * data)
+@@ -1583,7 +1866,16 @@ frida_do_read (void * data)
  {
    const struct frida_xfer_job * job = data;
  
 -  return frida_kmod_process_read (job->pid, job->address, job->buffer, job->size);
-+  long result = frida_kmod_process_read (job->pid, job->address, job->buffer, job->size);
++  long result;
++
++  if (trace_process_ops)
++    pr_info ("frida: process op=read pid=%u received\n", job->pid);
++  result = frida_kmod_process_read (job->pid, job->address, job->buffer, job->size);
 +
 +  if (trace_process_ops)
 +    pr_info ("frida: process op=read pid=%u result=%ld tid=%ld\n",
@@ -901,12 +934,16 @@ index 8e3a754..300bb1c 100644
  }
  
  static long
-@@ -1591,7 +1850,12 @@ frida_do_spawn (void * data)
+@@ -1591,7 +1883,16 @@ frida_do_spawn (void * data)
  {
    const struct frida_spawn_args * args = data;
  
 -  return frida_kmod_process_spawn_thread (args->pid, args->entry, args->stack, args->arg, args->tls);
-+  long result = frida_kmod_process_spawn_thread (args->pid, args->entry, args->stack, args->arg, args->tls);
++  long result;
++
++  if (trace_process_ops)
++    pr_info ("frida: process op=spawn pid=%u received\n", args->pid);
++  result = frida_kmod_process_spawn_thread (args->pid, args->entry, args->stack, args->arg, args->tls);
 +
 +  if (trace_process_ops)
 +    pr_info ("frida: process op=spawn pid=%u result=%ld tid=%ld\n",
