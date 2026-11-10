@@ -39,8 +39,8 @@
  static struct task_struct *
  frida_grab_process_leader (int pid)
  {
-@@ -1179,9 +1186,16 @@
-   }
+@@ -1183,9 +1190,16 @@
+ #endif
  }
  
 +#endif /* !FRIDA_KERNEL_ONLY */
