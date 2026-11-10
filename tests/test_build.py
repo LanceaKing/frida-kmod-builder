@@ -160,6 +160,14 @@ class ConfigurationTests(unittest.TestCase):
                 self.assertEqual(builder.frida_source(c)["profile"], "full-5.10")
                 self.assertEqual(c["kernel_ref"], release.split("-g")[1].split("-")[0])
 
+    def test_gki_symbol_map_accepts_prepared_artifacts(self):
+        c = builder.configuration({"kernel_release": "5.10.240-android13-4-gabcdef0-ab12345",
+                                   "system_map_url": "https://example.com/System.map"})
+        self.assertTrue(c["prepare_url"])
+        self.assertEqual(c["kernel_image_url"], "")
+        with self.assertRaisesRegex(ValueError, "Linux 5.10"):
+            builder.configuration({"system_map_url": "https://example.com/System.map"})
+
     def test_rejects_wrong_family(self):
         with self.assertRaisesRegex(ValueError, "family"):
             builder.configuration({"kernel_family": "android13-5.10"})

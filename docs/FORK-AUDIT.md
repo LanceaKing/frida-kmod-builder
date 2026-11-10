@@ -59,6 +59,6 @@ The default 6.1 build does not establish runtime acceptance on a 6.1 device.
 
 The kernel ABI workflow compiles full and kernel-only glue against pinned Android 12/13 GKI 5.10 and 5.15, 6.1, 6.6, 6.12, and 6.18 sources. These are compile checks, not device acceptance or complete module-link checks. CFI and LTO are disabled in this header matrix; the exact-target module builds exercise their actual configuration separately.
 
-The 5.10 process path requires the GKI configuration (`CONFIG_SCHED_AUTOGROUP=n`). Optional MTE, seccomp and cgroup helpers are resolved only when configured. The target headers determine whether secondary TLS and SCTLR state are present. Missing required runtime symbols fail initialization instead of using guessed offsets. This does not promise support for arbitrary vendor modifications.
+The 5.10 process path requires the GKI configuration (`CONFIG_SCHED_AUTOGROUP=n`). Optional MTE, seccomp and cgroup helpers are resolved only when configured. The target headers determine whether secondary TLS and SCTLR state are present. Missing required runtime symbols fail initialization instead of using guessed offsets. Outside 5.10, process injection still requires the upstream `user_mode_thread` interface; passing the C compile matrix alone does not establish process-injection support for a kernel that lacks it. This does not promise support for arbitrary vendor modifications.
 
 Validation of the new candidate is pending. Previous Pixel results describe earlier source pins.

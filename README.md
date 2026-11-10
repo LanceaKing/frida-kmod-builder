@@ -45,7 +45,7 @@ For a vendor kernel, provide its exact source revision and prepared artifacts.
 | `symvers_url` | Public HTTPS URL for `Module.symvers` from the same build. |
 | `kernel_image_url` | Original `Image` or `Image.lz4` URL for rebuilding an expired prepared tree. Set with `symvers_url`; leave `prepare_url` empty. |
 | `kernel_config_sha256` | SHA256 of the decompressed device configuration. Required in image preparation mode. |
-| `system_map_url` | Original `System.map` for Linux 5.10 GKI builds that trim kprobe exports. Requires image preparation. Both modes use the same bootstrap. |
+| `system_map_url` | Original `System.map` for Linux 5.10 GKI builds that trim kprobe exports. Works with prepared artifacts or image preparation. Both modes use the same bootstrap. |
 | `agent_mode` | `full` or `kernel-only`. The latter supports PID 0 sessions and disables process injection and automatic process hooks. |
 | `kernel_clang_url` | `auto`, `system`, or an HTTPS compiler archive URL. See below. |
 | `rust_toolchain` | Rust version or dated nightly for the agent. Default: `1.99.1`. |

@@ -76,9 +76,9 @@ It then calls the existing synchronous unregister function before the loader fre
 This also covers a worker that stops after an initialization failure.
 Both modes use this fix. It does not change CFI enforcement.
 
-[Linux 5.10 process injection](https://github.com/LanceaKing/frida-core/commit/32e5a832a5fd837456f6341f53ec075925683925) is selected only for the pinned Pixel 7a kernel and Frida 17.26.2.
+The original [Linux 5.10 process injection fix](https://github.com/LanceaKing/frida-core/commit/32e5a832a5fd837456f6341f53ec075925683925) was device-specific. The unified source now selects the GKI ABI automatically for ARM64 Linux 5.10, without a device or patch-level allowlist.
 It uses the 5.10 `kernel_thread` entry convention, then prepares EL0 registers, stack, TLS, user address access, PAC/MTE state, credentials, seccomp state, namespaces, and thread-group membership before returning to userspace.
-It uses two-argument `detach_pid`, omits `free_pids` and the absent `quick_threads` field, transfers the user/process accounting, and uses the target kernel's signal cleanup helper.
+The target headers select the PID-detach calling convention, signal accounting fields, ARM64 cache API, and optional TLS/SCTLR fields. The 5.10 path transfers user/process accounting and uses the target kernel's signal cleanup helper.
 The creator owns the spawn context until the child completes setup. Failure paths release the target task and mm references.
 The target's exec lock excludes an address-space replacement during setup. Exit checks and reference acquisition run under the tasklist, task, and sighand locks.
 

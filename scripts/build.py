@@ -103,8 +103,8 @@ def configuration(values):
     if c["kernel_clang_url"] not in ("auto", "system"):
         https_url(c["kernel_clang_url"])
     if c["system_map_url"]:
-        require(c["kernel_image_url"] and family[1] == "5.10",
-                "System.map bootstrap requires image preparation and Linux 5.10.")
+        require(family[1] == "5.10",
+                "System.map bootstrap requires Linux 5.10.")
     c["artifact_name"] = f"{c['module_name']}-{c['frida_version']}-{c['kernel_release']}-{c['agent_mode']}"
     return c
 
