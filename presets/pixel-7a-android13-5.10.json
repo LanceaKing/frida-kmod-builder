@@ -7,5 +7,5 @@
   "kernel_config_sha256": "732e0ee8ce3d0e5d4b24494406cda13187596170f45976e39be7ba18518315b7",
   "agent_mode": "kernel-only",
   "frida_version": "17.26.2",
-  "include_server": false
+  "include_server": "false"
 }
