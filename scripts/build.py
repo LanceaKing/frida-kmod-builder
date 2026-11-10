@@ -154,6 +154,17 @@ def inspect_kernel(directory, expected_release):
     return options
 
 
+def inspect_source(directory, release, commit):
+    embedded = re.search(r"-g([0-9a-f]{7,40})(?:-|$)", release)
+    require(not embedded or commit.startswith(embedded[1]),
+            "The source commit does not match the -g commit in kernel_release.")
+    numbers = dict(re.findall(r"^(VERSION|PATCHLEVEL|SUBLEVEL)\s*=\s*(\d+)\s*$",
+                              (directory / "Makefile").read_text(), re.MULTILINE))
+    version = ".".join(numbers.get(key, "?") for key in ("VERSION", "PATCHLEVEL", "SUBLEVEL"))
+    require(re.match(re.escape(version) + r"(?:[-+]|$)", release),
+            "The source kernel version does not match kernel_release.")
+
+
 def prepare():
     c = read_json(WORK / "configuration.json")
     prepared = WORK / "kernel-prepared"
@@ -170,10 +181,16 @@ def prepare():
         with urllib.request.urlopen(url, timeout=60) as response:
             ref = json.loads(response.read().decode()[4:])["commit"]
     kernel_commit = git_checkout(repository, ref, WORK / "kernel-source")
+    inspect_source(WORK / "kernel-source", c["kernel_release"], kernel_commit)
 
     # The prepared Makefile can refer to the original CI workspace.
     # Passing KDIR and KOUT to upstream kbuild rewrites this stub for this runner.
     frida_commit = git_checkout("https://github.com/frida/frida-core.git", c["frida_version"], WORK / "frida-core")
+    patches = []
+    for patch in sorted((ROOT / "patches" / c["frida_version"]).glob("*.patch")):
+        run("git", "apply", "--check", patch, cwd=WORK / "frida-core")
+        run("git", "apply", patch, cwd=WORK / "frida-core")
+        patches.append({"path": str(patch.relative_to(ROOT)), "sha256": sha256(patch)})
     run("git", "submodule", "update", "--init", "--recursive", "--depth=1", "releng", cwd=WORK / "frida-core")
     base = f"https://github.com/frida/frida/releases/download/{c['frida_version']}"
     devkit = f"frida-gumjs-devkit-{c['frida_version']}-none-arm64-softfloat_nopic.tar.xz"
@@ -197,10 +214,13 @@ def prepare():
         clang_bin = Path("/usr/lib/llvm-19/bin")
     write_json(WORK / "sources.json", {
         "kernel_commit": kernel_commit, "frida_commit": frida_commit,
+        "frida_patches": patches,
         "releng_commit": run("git", "rev-parse", "HEAD", cwd=WORK / "frida-core/releng", capture=True).strip(),
         "kernel_clang_url": clang_url, "kernel_clang_bin": str(clang_bin),
         "kernel_config_sha256": sha256(prepared / ".config"),
         "module_symvers_sha256": sha256(prepared / "Module.symvers"),
+        "sdk_libc_sha256": sha256(WORK / "sdk/lib/libc.a"),
+        "sdk_deps_file_sha256": sha256(WORK / "frida-core/releng/deps.toml"),
     })
 
 
@@ -239,6 +259,12 @@ def package():
     require("AArch64" in elf and "REL (Relocatable file)" in elf, "The output must be an AArch64 relocatable ELF module.")
     shutil.copy2(WORK / "frida-core/src/barebone/agent/etc/linux-kmod.json", DIST / "linux-kmod.json")
     shutil.copy2(ROOT / "docs/INSTALL.md", DIST / "INSTALL.md")
+    shutil.copy2(ROOT / "THIRD_PARTY_NOTICES.md", DIST / "THIRD_PARTY_NOTICES.md")
+    shutil.copy2(WORK / "frida-core/COPYING", DIST / "LICENSE.frida-core")
+    shutil.copy2(WORK / "kernel-source/COPYING", DIST / "LICENSE.kernel")
+    for patch in sources["frida_patches"]:
+        path = ROOT / patch["path"]
+        shutil.copy2(path, DIST / path.name)
     (DIST / "modinfo.txt").write_text(run("modinfo", module, capture=True))
     if c["include_server"] == "true":
         import lzma

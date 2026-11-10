@@ -12,7 +12,7 @@ Replace `frida-agent.ko` if you selected a different module name.
 If the artifact does not include `frida-server`, obtain the matching Android arm64 release from Frida.
 
 ```sh
-sha256sum -c SHA256SUMS
+shasum -a 256 -c SHA256SUMS
 adb shell uname -r
 adb shell su -c id
 adb push frida-agent.ko frida-server linux-kmod.json /data/local/tmp/

@@ -80,5 +80,24 @@ class KernelTests(unittest.TestCase):
             builder.inspect_kernel(self.path, builder.DEFAULT_RELEASE)
 
 
+class SourceTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name)
+        (self.path / "Makefile").write_text("VERSION = 6\nPATCHLEVEL = 1\nSUBLEVEL = 145\n")
+
+    def test_matching_source(self):
+        builder.inspect_source(self.path, builder.DEFAULT_RELEASE, "c1de4747ac591582dce61ce3143a25cccdef3442")
+
+    def test_wrong_source_commit(self):
+        with self.assertRaisesRegex(ValueError, "commit"):
+            builder.inspect_source(self.path, builder.DEFAULT_RELEASE, "a" * 40)
+
+    def test_wrong_source_version(self):
+        with self.assertRaisesRegex(ValueError, "version"):
+            builder.inspect_source(self.path, "6.1.146-vendor", "a" * 40)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -44,4 +44,5 @@ Frida agent 部分独立使用 LLVM 19，以满足 soft-float 构建要求。
 失败时可下载 diagnostics 查看日志。
 这是公开仓库，只填写可公开的下载地址。
 构建会检查 ELF 架构、版本字符串及配置是否变化，但不会在手机上加载模块。
+Frida 17.26.2 的 `CONFIG_SYSVIPC` 条件编译修复会随产物一起提供，详见[补丁说明](../patches/README.md)。
 安装流程见 [INSTALL.md](INSTALL.md)。
