@@ -55,6 +55,12 @@ class ModuleSectionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unsafe SHF_GNU_RETAIN.*bss"):
             builder.inspect_module_sections(self.path)
 
+    def test_allows_native_retained_read_only_code(self):
+        self.path.write_bytes(elf_fixture(3))
+        result = builder.inspect_module_sections(self.path)
+        self.assertEqual(result["writable_gnu_retain"], "absent")
+        self.assertEqual(result["retained_read_only_sections"], [".text"])
+
     def test_never_modifies_kernel_owned_sections(self):
         for name in (".modinfo", ".data..ro_after_init", "__jump_table"):
             before = elf_fixture(0x200003, name)

@@ -32,7 +32,8 @@ Raw device logs remain local and are not part of this public report.
 
 The preserved module's `.bss` had ELF flags `0x200003`.
 Bit `0x200000` means `SHF_GNU_RETAIN` to the toolchain and `SHF_RO_AFTER_INIT` to this kernel.
-The prelink merged retained agent sections into `.bss`. The final link carried that bit into the module's combined `.bss`.
+The prelinked agent retained `.bss.__lock___libc_recursive_mutex`, a C library lock section.
+Kbuild merged it into the module's combined `.bss` and carried the retention bit into that section.
 The kernel classified the section as read-only after initialization. The agent then attempted to change its wake counter.
 The observed fault, instruction, timing, and target kernel's loader code support this cause.
 
@@ -44,7 +45,9 @@ The builder now clears only `SHF_GNU_RETAIN`, after the agent prelink and before
 It preserves all section data, types, sizes, alignment, relocations, and other flags.
 The prelink uses no garbage collection. The final kbuild link retains the selected sections without this userspace retention flag.
 The builder refuses to apply this operation to an object that contains kernel-owned sections.
-Packaging rejects remaining retention flags and requires a writable NOBITS `.bss`.
+Packaging rejects remaining retention flags on writable sections and requires a writable NOBITS `.bss`.
+Native kbuild also retains read-only `.text`. The loader classifies executable and read-only sections before its read-only-after-init class.
+The validator permits that case and records those sections without changing them.
 The correction preserves kernel configuration, CFI, and normal kernel protections for sections that become read-only after initialization.
 
 A separate patch aligns the Linux Rust entry point with its C declaration.

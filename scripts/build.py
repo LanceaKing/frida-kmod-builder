@@ -174,12 +174,16 @@ def strip_agent_retain(path):
 
 def inspect_module_sections(path):
     sections = elf_sections(path.read_bytes())
-    retained = [s["name"] for s in sections if s["flags"] & 0x200000]
+    retained = [s["name"] for s in sections if s["flags"] & 0x200000 and s["flags"] & 1]
     require(not retained, f"Unsafe SHF_GNU_RETAIN in kernel module sections: {retained}")
     bss = next((s for s in sections if s["name"] == ".bss"), None)
     require(bss is not None and bss["type"] == 8 and bss["flags"] & 3 == 3,
             "Expected a writable, allocated NOBITS .bss section.")
-    return {"gnu_retain": "absent", "bss": "writable allocated NOBITS"}
+    # The loader handles executable and read-only sections before its
+    # ro-after-init class. Native kbuild can retain read-only code safely.
+    return {"writable_gnu_retain": "absent", "bss": "writable allocated NOBITS",
+            "retained_read_only_sections": [s["name"] for s in sections
+                                            if s["flags"] & 0x200000 and not s["flags"] & 1]}
 
 
 def download(url, path):

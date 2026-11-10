@@ -31,5 +31,6 @@ The macOS entry point keeps its arguments. This corrects a separate ABI defect, 
 
 The builder also removes `SHF_GNU_RETAIN` from the prelinked agent before kbuild links the C wrapper.
 This linker flag overlaps Linux's internal `SHF_RO_AFTER_INIT` flag.
-The final module must contain no such input flags, and `.bss` must remain writable, allocated, and NOBITS.
+The final module must contain no such flags on writable sections, and `.bss` must remain writable, allocated, and NOBITS.
+Native kbuild can retain read-only `.text`. The loader classifies code before its read-only-after-init class, so this remains safe.
 The kernel still applies its own protections to `.data..ro_after_init` and `__jump_table` during loading.
