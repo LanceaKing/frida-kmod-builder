@@ -34,7 +34,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y clang-19 lld-19 llvm-19 flex bison libelf-dev libssl-dev bc gcc-aarch64-linux-gnu
+        run: sudo apt-get update && sudo apt-get install -y clang-19 lld-19 llvm-19 flex bison libelf-dev libdw-dev zlib1g-dev libssl-dev bc gcc-aarch64-linux-gnu
       - name: Select LLVM tools
         run: echo /usr/lib/llvm-19/bin >> "$GITHUB_PATH"
       - name: Fetch pinned sources
