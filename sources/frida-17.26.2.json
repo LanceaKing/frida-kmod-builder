@@ -3,7 +3,7 @@
   "core": {
     "repository": "https://github.com/LanceaKing/frida-core.git",
     "upstream_commit": "588ac3b3ded6779f095825df5c64cab59f0c6774",
-    "commit": "23ecde5ddf98385f267ccec229db1944365a89c2"
+    "commit": "2933e5e4f5696ffdfaad484f5bc79870a385dce8"
   },
   "java_bridge": {
     "repository": "https://github.com/LanceaKing/frida-java-bridge.git",
