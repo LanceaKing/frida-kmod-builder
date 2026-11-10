@@ -130,5 +130,5 @@ Temporary files stay in `.work/`, and packaged files stay in `dist/`.
 The Actions form takes inspiration from [WildKernels/GKI_KernelSU_SUSFS](https://github.com/WildKernels/GKI_KernelSU_SUSFS).
 This repository does not copy its kernel patches or build a replacement kernel.
 The build follows [Frida's Linux module instructions](https://github.com/frida/frida-core/blob/17.26.2/src/barebone/agent/linux/README.md).
-The builder uses [pinned official forks](docs/FORKS.md). Each artifact records the exact commits in `frida-sources.json`. Local [patch files](patches/README.md) remain as historical evidence and are no longer applied during builds.
+The builder uses [pinned official forks](docs/FORKS.md). Each artifact records the exact commits in `frida-sources.json`. The [compatibility change index](docs/COMPATIBILITY.md) links every former local patch to its owning fork commit.
 Frida and the Linux kernel retain their upstream licenses. See [third-party notices](THIRD_PARTY_NOTICES.md).

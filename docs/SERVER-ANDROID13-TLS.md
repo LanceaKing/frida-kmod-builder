@@ -11,7 +11,7 @@ It places the Bionic scratch area at three quarters of that block, leaving 2 KiB
 The target libc reads `bionic_systrace_disabled` at offset `0x2fa1` from the Bionic TLS pointer.
 That read falls outside the allocated block and crashes the injected Calculator thread before its agent connects.
 
-`patches/17.26.2/server/0001-android-bionic-tls-capacity.patch` increases the Android TLS block to 64 KiB.
+[Android Bionic TLS capacity](https://github.com/LanceaKing/frida-core/commit/9861f4546a5bd42369416da1efb4d021878e35e0) increases the Android TLS block to 64 KiB.
 The existing layout then gives each scratch area 16 KiB.
 The allocator, range registration, and cleanup share `TLS_SIZE`, so they use the same new size.
 The non-Android branch keeps its original size. This is a capacity correction for the observed Android 13 layout, not universal Bionic compatibility.
@@ -21,7 +21,7 @@ The injector starts an asynchronous socket accept before it writes the loader an
 If either operation throws, the accept can remain pending after the attach call returns.
 Three device probes each left one abstract Unix listener and one server file descriptor behind.
 
-`patches/17.26.2/server/0002-kernel-injection-connection-cleanup.patch` gives that connection attempt its own cancellation object.
+[Injection connection cleanup](https://github.com/LanceaKing/frida-core/commit/fdc9da5ab29ac5bbe32c8b68ff7d3cc43c3ae230) gives that connection attempt its own cancellation object.
 The injector cancels the attempt in `finally`, including when a write, spawn, or connection wait fails.
 An accepted connection also closes if its agent handshake fails before ownership transfers to the caller.
 The patch preserves the original error and leaves successful agent connections open.

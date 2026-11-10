@@ -10,7 +10,7 @@ The [Java bridge fork](https://github.com/LanceaKing/frida-java-bridge) contains
 
 The [tools fork](https://github.com/LanceaKing/frida-tools) changes only the bridge dependency and its lock entry. The standard CLI bundles the fixed bridge. The server entrypoints, SELinux helper, client protocol, and CLI commands remain unchanged. Official GumJS devkits and SDK dependencies remain pinned by the existing release and releng files.
 
-Local files under `patches/` are historical evidence. Builds and fresh npm installs no longer apply them. Module bundles include `frida-sources.json`; `build-info.json` records the selected core commit and source-lock hash. Both Pixel presets include the fork server by default. Packaging verifies the compressed server and the extracted binary before replacing its output file.
+All 11 former local patches live in the forks. The [compatibility index](COMPATIBILITY.md) records their commits. The local patch directory was removed after exact Git-tree comparison. Builds and fresh npm installs use the fixed fork sources directly. Module bundles include `frida-sources.json`; `build-info.json` records the selected core commit and source-lock hash. Both Pixel presets include the fork server by default. Packaging verifies the compressed server and the extracted binary before replacing its output file.
 
 ## Server and CLI release
 
