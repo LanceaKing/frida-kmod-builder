@@ -38,3 +38,20 @@ The kernel still applies its own protections to `.data..ro_after_init` and `__ju
 `0005-resident-agent-config.patch` adds the required `agent.type` value, `resident`, to the upstream Linux module configuration.
 Frida 17.26.2 selects the agent configuration class using this field.
 Without it, the supplied example fails with `Config for 'agent' is invalid` before opening `/dev/frida`.
+
+`0006-arm64-image-pages.patch` checks the known arm64 kernel image range before the vmalloc range.
+Android 5.10 can place its randomized image inside the range accepted by `is_vmalloc_addr()`.
+`vmalloc_to_page()` cannot handle the image's block mappings. The patch uses `__pa_symbol()` for image pages and rejects allocation or page lookup failures before `vmap()`.
+Both modes use this fix.
+
+`full-5.10/0006-linux-5.10-process-injection.patch` is selected only for the pinned Pixel 7a kernel and Frida 17.26.2.
+It uses the 5.10 `kernel_thread` entry convention, then prepares EL0 registers, stack, TLS, user address access, PAC/MTE state, credentials, seccomp state, namespaces, and thread-group membership before returning to userspace.
+It uses two-argument `detach_pid`, omits `free_pids` and the absent `quick_threads` field, transfers the user/process accounting, and uses the target kernel's signal cleanup helper.
+The creator owns the spawn context until the child completes setup. Failure paths release the target task and mm references.
+The target's exec lock excludes an address-space replacement during setup. Exit checks and reference acquisition run under the tasklist, task, and sighand locks.
+
+The full patch checks required symbols, preflights hook page mappings, checks all seven replacement results, and reverts installed hooks on failure.
+It exposes the official prctl service only after initialization succeeds. Shutdown closes that service, reverts hooks, waits for active Gum callbacks, and drains the process worker.
+`trace_process_ops=1` logs operation names, target PID, result and created TID. It is off by default and does not log memory contents.
+The ordinary Android server uses this service for App injection. The Barebone protocol remains unchanged.
+Runtime acceptance is tracked separately from compiled features in `build-info.json`.
