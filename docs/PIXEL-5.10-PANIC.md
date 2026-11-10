@@ -57,6 +57,10 @@ This ABI mismatch did not explain the observed wake-counter write fault.
 ## Validation limits
 
 Regression tests reproduce the conflicting flags and require the old artifact to fail the new section check.
+All 28 local tests passed, and [Actions run 42780176775](https://github.com/LanceaKing/frida-kmod-builder/actions/runs/42780176775) built revision `f513722` successfully.
+The revised module has SHA256 `ddfece51db48aee0b9b4b5b8e0e107239e355b1384a9a7757d437e515edd72a0` and `.bss` flags `0x3`.
+Offline validation matched the target vermagic, all 62 symbol CRC records, all 61 imported symbols, and bundle hashes.
+The legacy CFI check function remained present. The apt, source, download, and Rust caches were reused.
 The revised artifact still requires supervised device validation before normal use.
 No repeat module load, root reactivation, reboot, or boot-image change formed part of this investigation.
 KernelSU runtime jailbreak root must be reactivated through the previously used method after a full reboot.
