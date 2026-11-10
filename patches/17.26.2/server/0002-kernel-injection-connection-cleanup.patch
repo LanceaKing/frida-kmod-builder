@@ -1,0 +1,88 @@
+diff --git a/src/linux/kernel-injector.vala b/src/linux/kernel-injector.vala
+--- a/src/linux/kernel-injector.vala
++++ b/src/linux/kernel-injector.vala
+@@ -244,27 +244,33 @@
+ 			bres.context.allocation_base = (void *) region_base;
+ 			bres.context.allocation_size = region.total;
+ 
+-			Future<RemoteAgent> future_agent = establish_connection (spec, fallback_address, bres, cancellable);
+-
+-			write_region (region_base, region, spec, data, fallback_address, libc);
+-
+-			kernel.cloak_range (region_base, region.total);
+-			kernel.cloak_range (stack_base, STACK_SIZE);
+-			kernel.cloak_range (tls_base, TLS_SIZE);
+-
+-			uint64 entry = region_base + region.entry_offset;
+-			uint64 context = region_base + region.context_offset;
+-			uint64 stack_top = (stack_base + STACK_SIZE - 16) & ~((uint64) 15);
+-
+-			uint tid = kernel.spawn_thread (entry, stack_top, context, tls);
+-			kernel.cloak_thread (tid);
+-
+-			var agent = yield await_agent (future_agent, cancellable);
+-
+-			kernel.free (stack_base, STACK_SIZE);
+-			kernel.free (tls_base, TLS_SIZE);
+-
+-			return agent;
++			var connection_cancellable = new Cancellable ();
++			try {
++				Future<RemoteAgent> future_agent = establish_connection (spec, fallback_address, bres, connection_cancellable);
++
++				write_region (region_base, region, spec, data, fallback_address, libc);
++
++				kernel.cloak_range (region_base, region.total);
++				kernel.cloak_range (stack_base, STACK_SIZE);
++				kernel.cloak_range (tls_base, TLS_SIZE);
++
++				uint64 entry = region_base + region.entry_offset;
++				uint64 context = region_base + region.context_offset;
++				uint64 stack_top = (stack_base + STACK_SIZE - 16) & ~((uint64) 15);
++
++				uint tid = kernel.spawn_thread (entry, stack_top, context, tls);
++				kernel.cloak_thread (tid);
++
++				var agent = yield await_agent (future_agent, cancellable);
++
++				kernel.free (stack_base, STACK_SIZE);
++				kernel.free (tls_base, TLS_SIZE);
++
++				return agent;
++			} finally {
++				// End the accept/handshake even if writing or spawning throws before await_agent().
++				connection_cancellable.cancel ();
++			}
+ 		}
+ 
+ 		public async void deallocate (BootstrapResult bres, Cancellable? cancellable) throws Error, IOError {
+@@ -353,12 +359,15 @@
+ 		private async void accept_agent (Socket server_socket, InjectSpec spec, BootstrapResult bres,
+ 				Promise<RemoteAgent> promise, Cancellable? cancellable) {
+ 			var listener = new SocketListener ();
++			UnixConnection? connection = null;
++			bool handed_off = false;
+ 			try {
+ 				listener.add_socket (server_socket, null);
+ 
+-				var connection = (UnixConnection) yield listener.accept_async (cancellable);
++				connection = (UnixConnection) yield listener.accept_async (cancellable);
+ 				var agent = yield RemoteAgent.start (FROM_SCRATCH, spec, pid, bres, connection, null,
+ 					cancellable);
++				handed_off = true;
+ 				promise.resolve (agent);
+ 			} catch (Error e) {
+ 				promise.reject (e);
+@@ -368,6 +377,12 @@
+ 				promise.reject (new Error.TRANSPORT ("%s", e.message));
+ 			} finally {
+ 				listener.close ();
++				if (connection != null && !handed_off) {
++					try {
++						connection.close (null);
++					} catch (GLib.Error e) {
++					}
++				}
+ 			}
+ 		}
+ 

@@ -21,6 +21,8 @@ ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / ".work"
 DIST = ROOT / "dist"
 DEFAULT_RELEASE = "6.1.145-android14-11-gc1de4747ac59-ab14219743"
+PIXEL_510_RELEASE = "5.10.157-android13-4-00003-g776d0a76f6aa-ab10208116"
+PIXEL_510_COMMIT = "776d0a76f6aa7c5a92c60afbe886a8e786953199"
 DEFAULTS = {
     "frida_version": "17.26.2",
     "kernel_release": DEFAULT_RELEASE,
@@ -103,14 +105,33 @@ def configuration(values):
     if c["kernel_clang_url"] not in ("auto", "system"):
         https_url(c["kernel_clang_url"])
     if c["system_map_url"]:
-        require(c["kernel_image_url"] and c["agent_mode"] == "kernel-only" and family[1] == "5.10",
-                "System.map bootstrap requires image preparation, Linux 5.10, and kernel-only mode.")
+        require(c["kernel_image_url"] and family[1] == "5.10",
+                "System.map bootstrap requires image preparation and Linux 5.10.")
+    if c["agent_mode"] == "full" and family[1] == "5.10":
+        require(c["kernel_release"] == PIXEL_510_RELEASE and c["kernel_ref"] == PIXEL_510_COMMIT
+                and c["frida_version"] == "17.26.2",
+                "The full 5.10 backport is limited to the pinned Pixel 7a kernel and Frida 17.26.2.")
     c["artifact_name"] = f"{c['module_name']}-{c['frida_version']}-{c['kernel_release']}-{c['agent_mode']}"
     return c
 
 
 def read_json(path):
     return json.loads(path.read_text())
+
+
+def select_patches(c):
+    patch_dir = ROOT / "patches" / c["frida_version"]
+    selected = sorted(patch_dir.glob("*.patch"))
+    mode_dir = None
+    if c["agent_mode"] == "kernel-only":
+        mode_dir = patch_dir / "kernel-only"
+    elif c["kernel_release"] == PIXEL_510_RELEASE:
+        mode_dir = patch_dir / "full-5.10"
+    if mode_dir is not None:
+        mode_patches = sorted(mode_dir.glob("*.patch"))
+        require(mode_patches, f"No compatibility patches exist in {mode_dir}.")
+        selected += mode_patches
+    return selected
 
 
 def write_json(path, value):
@@ -419,13 +440,7 @@ def prepare():
     # Passing KDIR and KOUT to upstream kbuild rewrites this stub for this runner.
     frida_commit = git_checkout("https://github.com/frida/frida-core.git", c["frida_version"], WORK / "frida-core")
     patches = []
-    patch_dir = ROOT / "patches" / c["frida_version"]
-    selected_patches = sorted(patch_dir.glob("*.patch"))
-    if c["agent_mode"] == "kernel-only":
-        mode_patches = sorted((patch_dir / "kernel-only").glob("*.patch"))
-        require(mode_patches, "No kernel-only compatibility patch exists for this Frida version.")
-        selected_patches += mode_patches
-    for patch in selected_patches:
+    for patch in select_patches(c):
         run("git", "apply", "--check", patch, cwd=WORK / "frida-core")
         run("git", "apply", patch, cwd=WORK / "frida-core")
         patches.append({"path": str(patch.relative_to(ROOT)), "sha256": sha256(patch)})
@@ -463,11 +478,11 @@ def build():
     extra_args = []
     if c["kernel_image_url"]:
         extra_args += [f"KERNELRELEASE={c['kernel_release']}", "LLVM_IAS=1", "CROSS_COMPILE=aarch64-linux-gnu-"]
-    if c["agent_mode"] == "kernel-only":
-        definitions = ["-DFRIDA_KERNEL_ONLY"]
-        if sources.get("symbol_bootstrap"):
-            offset = sources["symbol_bootstrap"]["kallsyms_lookup_name_offset"]
-            definitions += ["-DFRIDA_GKI_TRIMMED_EXPORTS", f"-DFRIDA_KALLSYMS_LOOKUP_OFFSET={offset}UL"]
+    definitions = ["-DFRIDA_KERNEL_ONLY"] if c["agent_mode"] == "kernel-only" else []
+    if sources.get("symbol_bootstrap"):
+        offset = sources["symbol_bootstrap"]["kallsyms_lookup_name_offset"]
+        definitions += ["-DFRIDA_GKI_TRIMMED_EXPORTS", f"-DFRIDA_KALLSYMS_LOOKUP_OFFSET={offset}UL"]
+    if definitions:
         extra_args += ["EXTRA_CFLAGS=" + " ".join(definitions)]
     agent_dir = WORK / "frida-core/src/barebone/agent/linux"
     make_args = ["make", "-C", agent_dir,
@@ -534,6 +549,11 @@ def package():
         "run_url": f"https://github.com/{os.environ.get('GITHUB_REPOSITORY', '')}/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}",
         "features": {"kernel_session": True, "process_thread_injection": c["agent_mode"] == "full",
                      "automatic_process_hooks": c["agent_mode"] == "full"},
+        "support_status": "built, not device-validated",
+        "device_validation": {"status": "not performed", "kernel_injection": "not tested",
+                              "native_hook": "not tested", "java_hook": "not tested",
+                              "spawn": "not tested", "lifecycle": "not tested",
+                              "kernel_session": "not tested"},
         "validation": {"elf": "AArch64 relocatable", "vermagic": "matched",
                        "sections": section_validation, "device_load_test": "not performed"},
     }

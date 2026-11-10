@@ -45,7 +45,7 @@ For a vendor kernel, provide its exact source revision and prepared artifacts.
 | `symvers_url` | Public HTTPS URL for `Module.symvers` from the same build. |
 | `kernel_image_url` | Original `Image` or `Image.lz4` URL for rebuilding an expired prepared tree. Set with `symvers_url`; leave `prepare_url` empty. |
 | `kernel_config_sha256` | SHA256 of the decompressed device configuration. Required in image preparation mode. |
-| `system_map_url` | Original `System.map` for Linux 5.10 GKI builds that trim kprobe exports. Requires image preparation and kernel-only mode. |
+| `system_map_url` | Original `System.map` for Linux 5.10 GKI builds that trim kprobe exports. Requires image preparation. Both modes use the same bootstrap. |
 | `agent_mode` | `full` or `kernel-only`. The latter supports PID 0 sessions and disables process injection and automatic process hooks. |
 | `kernel_clang_url` | `auto`, `system`, or an HTTPS compiler archive URL. See below. |
 | `rust_toolchain` | Rust version or dated nightly for the agent. Default: `1.99.1`. |
@@ -87,9 +87,14 @@ It relocates `CONFIG_UNUSED_KSYMS_WHITELIST` to a runner-local path and rejects 
 Gitiles blob URLs ending in `?format=TEXT` are decoded from base64 automatically.
 The [Pixel 7a Android 13 preset](presets/pixel-7a-android13-5.10.json) uses this path for build `10208116`.
 
-Frida 17.26.2 process thread injection requires interfaces absent from this Linux 5.10 build.
-Use `agent_mode=kernel-only` for this preset and connect with `-p 0`.
-This mode does not install Frida's automatic process hooks. It returns `EOPNOTSUPP` for process thread injection.
+The original [kernel-only preset](presets/pixel-7a-android13-5.10.json) remains available for `-p 0` sessions.
+It does not install automatic process hooks and returns `EOPNOTSUPP` for process thread creation.
+The separate [full preset](presets/pixel-7a-android13-5.10-full.json) adds a compatibility backport for this exact kernel and Frida 17.26.2.
+It remains experimental. The pinned device passed the bounded regression matrix with the server patches and the separate [Java bridge teardown patch](docs/JAVA-TEARDOWN.md).
+Apply that bridge patch in each script project and recompile its Java scripts. The server rebuild alone does not contain this correction.
+The [patched server](docs/SERVER-ANDROID13-TLS.md) corrects TLS capacity and a connection leak during failed injection.
+Read the [acceptance record](docs/PIXEL-5.10-FULL.md) before loading it.
+Other 5.10 kernels and 32-bit Apps are outside the reviewed scope.
 The preset also provides the original `System.map`. The builder derives the offset of `kallsyms_lookup_name` from `_text`; at load time, the exported `kimage_vaddr` supplies the relocated image base.
 This handles trimmed GKI exports without adding invented symbol CRCs or requiring a runtime address parameter.
 The glue functions that call unexported targets use local `__nocfi` annotations because legacy CFI may omit jump-table entries for those targets. The kernel CFI, LTO, and MODVERSIONS configuration remains enabled.
