@@ -1,10 +1,5 @@
 {
   "version": "17.26.2",
-  "frida": {
-    "repository": "https://github.com/LanceaKing/frida.git",
-    "commit": "c2d1acae50a323b9feacd2e91dc90a6ba93506fb",
-    "upstream_commit": "d8e133aee7d0b99dd3c84bcdc3a5a26e5bc3dfc3"
-  },
   "core": {
     "repository": "https://github.com/LanceaKing/frida-core.git",
     "upstream_commit": "2a41a960fe9b7fc0ccc85003e4f31f0caeec4d8d",
@@ -21,16 +16,17 @@
     "archive": "https://codeload.github.com/LanceaKing/frida-java-bridge/tar.gz/1245d0bbd84f68f3337e9f7a82316cef8d42294d"
   },
   "tools": {
-    "repository": "https://github.com/LanceaKing/frida-tools.git",
-    "commit": "761e5215dbe261805f66862607eeff9bcd610762",
-    "upstream_commit": "6bbae44a5df871524619337130471871ccc386dd",
-    "wheel_url": "https://github.com/LanceaKing/frida/releases/download/17.26.2-pixel-5.10.2/frida_tools-14.13.1.dev3-py3-none-any.whl",
-    "wheel_sha256": "c8daeb940b86a28581ca5888611e2f13f0001b8d83a3687ef5f94aed02111a3e"
+    "repository": "https://github.com/frida/frida-tools.git",
+    "commit": "6bbae44a5df871524619337130471871ccc386dd",
+    "wheel_url": "https://github.com/LanceaKing/frida-kmod-builder/releases/download/17.26.2-pixel-5.10.3/frida_tools-14.13.1.dev4-py3-none-any.whl",
+    "wheel_sha256": "c0ed3dda8c4b89e7d185692262a075529bb09ae8a60584bfc15732793f547171",
+    "version": "14.13.1-dev.4",
+    "dependencies": "sources/tools-17.26.2"
   },
   "server": {
-    "url": "https://github.com/LanceaKing/frida/releases/download/17.26.2-pixel-5.10.2/frida-server-17.26.2-android-arm64.xz",
-    "sha256": "67ff232ec48d2b022b2ecfcd47e7da87c8012b22fc0524cd7d21abfdcdf7b187",
-    "binary_sha256": "6b3a0a1fef0599a5fd762d49db6a982e146b0ac8cc5008d841fd69d6dc7552cf",
+    "url": "https://github.com/LanceaKing/frida-kmod-builder/releases/download/17.26.2-pixel-5.10.3/frida-server-17.26.2-android-arm64.xz",
+    "sha256": "8cb8a3a076339ed7c3cf6581e1ed5e572d4d9d75b687e4a6a91386456b872097",
+    "binary_sha256": "b6674025881fe799baadd3a6ab4c89091bc6d52a86e43e698c4fb625726200ee",
     "core_commit": "32e5a832a5fd837456f6341f53ec075925683925"
   }
 }

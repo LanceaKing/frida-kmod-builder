@@ -14,7 +14,7 @@ A completed Actions build does not prove that this module works on your device.
 
 Run these commands on the computer connected to the device.
 Replace `frida-agent.ko` if you selected a different module name.
-If the artifact does not include `frida-server`, obtain the pinned [fork release](FORKS.md) and verify both server hashes in `frida-sources.json`.
+If the artifact does not include `frida-server`, obtain the pinned [builder release](FORKS.md) and verify both server hashes in `frida-sources.json`.
 The Pixel presets include this server by default.
 
 ```sh
@@ -86,7 +86,7 @@ The unchanged Frida 17.26.2 server crashes during App attach because its synthet
 The [rebuilt Android server](SERVER-ANDROID13-TLS.md) corrects that capacity error.
 With official server startup, Native/Java callbacks and bounded injection tests work on this device.
 Install the [pinned fork bridge](JAVA-TEARDOWN.md) in the script project and recompile its Java scripts.
-For the standard `frida` CLI, install the [fork tools wheel](FORKS.md), which bundles that bridge.
+For the standard `frida` CLI, install the [bundled tools wheel](FORKS.md), which bundles that bridge.
 The pinned device passed the bounded teardown and injection regression matrix with that bridge patch.
 Unpatched script bundles still have the observed callback lifetime defect.
 Use the current server with both the TLS and connection-cleanup patches described in its build record.

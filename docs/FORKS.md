@@ -1,31 +1,57 @@
-# Pinned Frida forks
+# Two source forks and one builder
 
-The builder uses forks of the official Frida repositories. The [source lock](../sources/frida-17.26.2.json) records full commits, upstream bases, and release checksums. Builds reject versions without a source lock. Branch updates do not change a pinned build.
+This repository maintains the source lock, dependency files, build scripts, and releases. Only two source forks are required.
+The [core fork](https://github.com/LanceaKing/frida-core) contains kernel compatibility, TLS, and injection cleanup fixes.
+The [Java bridge fork](https://github.com/LanceaKing/frida-java-bridge) contains the script-unload fixes.
+The [compatibility index](COMPATIBILITY.md) links every former patch to its owning commit.
 
-The [Frida superproject](https://github.com/LanceaKing/frida) changes only the core and tools submodule URLs and commits. Clone it with `--recurse-submodules` to obtain the fixed full-mode source tree. It is based on official Frida 17.26.2.
+The builder selects the core `common`, `full-5.10`, or `kernel-only` profile from [the source lock](../sources/frida-17.26.2.json).
+It builds tools from a fixed [official frida-tools commit](https://github.com/frida/frida-tools/commit/6bbae44a5df871524619337130471871ccc386dd).
+Only `bridges/package.json` and `bridges/package-lock.json` are replaced with the copies in `sources/tools-17.26.2/`.
+The build rejects unrelated dependency changes. A build-local npm wrapper maps the upstream helpers' `npm install` calls to `npm ci`.
+The official tools program files stay unchanged. The CLI bundles the pinned bridge and keeps its official commands.
+The server keeps its official entrypoint and SELinux helper. Official GumJS devkits and SDK dependencies remain unchanged.
 
-The [core fork](https://github.com/LanceaKing/frida-core) preserves the existing compatibility fixes as separate commits. Its `common`, `full-5.10`, and `kernel-only` profiles match the corresponding legacy patch chains exactly, including both server fixes. The builder selects the full 5.10 profile only for the pinned Pixel kernel; other full builds use common. Kernel-only builds use their separate profile.
+The former top-level Frida and tools forks are no longer dependencies. Their releases move to this builder repository before those forks are deleted.
+Use the new release URLs below. Old URLs in earlier source-lock revisions are historical and no longer supported.
 
-The [Java bridge fork](https://github.com/LanceaKing/frida-java-bridge) contains the tested script-unload correction against bridge 7.0.13. Only `index.js`, `lib/android.js`, and `lib/class-factory.js` change. The first fork commit matches the prior accepted patch byte for byte. A ten-line follow-up suspends ART while restoring global inline patches, fixing a second race found during migration. See [the root cause and scope](JAVA-TEARDOWN.md).
+## Build and publish
 
-The [tools fork](https://github.com/LanceaKing/frida-tools) changes only the bridge dependency and its lock entry. The standard CLI bundles the fixed bridge. The server entrypoints, SELinux helper, client protocol, and CLI commands remain unchanged. Official GumJS devkits and SDK dependencies remain pinned by the existing release and releng files.
+Use Python 3.12, Node.js 26.9.0, npm 11.19.1, and uv 0.13.0 for the tools build.
+Python build dependencies are pinned in `sources/tools-17.26.2/build-constraints.txt`.
+Run from this repository:
 
-All 11 former local patches live in the forks. The [compatibility index](COMPATIBILITY.md) records their commits. The local patch directory was removed after exact Git-tree comparison. Builds and fresh npm installs use the fixed fork sources directly. Module bundles include `frida-sources.json`; `build-info.json` records the selected core commit and source-lock hash. Both Pixel presets include the fork server by default. Packaging verifies the compressed server and the extracted binary before replacing its output file.
+```sh
+python3.12 scripts/build_tools.py --output dist/release
+export ANDROID_NDK_ROOT=/path/to/android-ndk-29.0.14206865
+python3.12 scripts/build_server.py --output dist/release
+```
 
-## Server and CLI release
+The server script needs a clean build directory. Its default source checkout is `.work/server-source`.
+It uses the pinned core commit and records the compiler configuration in `server-build.json`.
+The tools script uses a fresh temporary checkout and writes `tools-build.json` with source and dependency hashes.
+The server excludes 32-bit and emulated compatibility payloads. Its protocol version remains 17.26.2.
 
-The [fork release](https://github.com/LanceaKing/frida/releases/tag/17.26.2-pixel-5.10.2) provides the Android arm64 server, the tools wheel, and the source lock. The server retains protocol version 17.26.2. Its SHA256 is `6b3a0a1fef0599a5fd762d49db6a982e146b0ac8cc5008d841fd69d6dc7552cf`. The build uses NDK r29, Python 3.12, and the [documented server configuration](SERVER-ANDROID13-TLS.md#source-and-build). It excludes 32-bit and emulated compatibility payloads.
+Build the modules with the existing Actions workflow and the full and kernel-only presets.
+Publish the server, tools wheel, both modules, their build records, the source lock, and checksums in this repository's release.
+Update the source-lock hashes before publishing. Download the assets again and check their hashes before accepting a release.
+Module packaging checks the compressed server and extracted binary hashes before replacing its output file.
 
-Install the tools wheel in an isolated environment with the matching client:
+## Install the bundled CLI
+
+The [builder release](https://github.com/LanceaKing/frida-kmod-builder/releases/tag/17.26.2-pixel-5.10.3) contains the server, tools wheel, modules, and provenance.
+Install the wheel with the matching Frida client in an isolated environment:
 
 ```sh
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install 'frida==17.26.2' 'https://github.com/LanceaKing/frida/releases/download/17.26.2-pixel-5.10.2/frida_tools-14.13.1.dev3-py3-none-any.whl#sha256=c8daeb940b86a28581ca5888611e2f13f0001b8d83a3687ef5f94aed02111a3e'
+python -m pip install 'frida==17.26.2' 'https://github.com/LanceaKing/frida-kmod-builder/releases/download/17.26.2-pixel-5.10.3/frida_tools-14.13.1.dev4-py3-none-any.whl#sha256=c0ed3dda8c4b89e7d185692262a075529bb09ae8a60584bfc15732793f547171'
 frida --version
 ```
 
-Verify the wheel SHA256 against `tools.wheel_sha256` in the source lock when downloading it separately. Its development version identifies the fork commit after the upstream tools release. Keep this environment pinned; a normal tools upgrade can replace the bundled bridge. Script projects that compile their own bridge must also use the [pinned npm dependency](JAVA-TEARDOWN.md#install-the-fork-bridge).
+The wheel version distinguishes this dependency bundle from the official tools package.
+Keep the environment pinned. A normal tools upgrade can replace its bundled bridge.
+Script projects that compile their own bridge must use the [pinned npm dependency](JAVA-TEARDOWN.md#install-the-fork-bridge).
 
 ## Migration validation
 
@@ -33,10 +59,10 @@ Git tree comparison confirmed all three core profiles reproduce the old patch ch
 
 The final source lock passed the [full build](https://github.com/LanceaKing/frida-kmod-builder/actions/runs/42827336519) and [kernel-only build](https://github.com/LanceaKing/frida-kmod-builder/actions/runs/42827343307), including server checksum validation and module ABI checks.
 
-Both downloaded fork modules passed normal unload/load and a Barebone PID 0 script. Their SHA256 values match the final CI artifacts exactly: full `b3bd71cae80fcdcb2f30dfbf9eea56e21c7aa4d1db88beac138c32ecd19f73d7`, kernel-only `991cf94fa1b9db95004b418aa717310f9f032dd9fbf8be1ae88b97fc8a218efb`. The fork CLI loaded its bundled Java bridge, installed a Java hook, unloaded it, and left Settings alive. A clean fork install also passed 30 application attach cycles, two spawns, two cancellations, 20 target-exit races with 20 recovery injections, and invalid/exited-PID and process-termination checks.
+Both downloaded fork modules passed normal unload/load and a Barebone PID 0 script. Their SHA256 values match the final CI artifacts exactly: full `b3bd71cae80fcdcb2f30dfbf9eea56e21c7aa4d1db88beac138c32ecd19f73d7`, kernel-only `991cf94fa1b9db95004b418aa717310f9f032dd9fbf8be1ae88b97fc8a218efb`. The bundled CLI loaded its bundled Java bridge, installed a Java hook, unloaded it, and left Settings alive. A clean fork install also passed 30 application attach cycles, two spawns, two cancellations, 20 target-exit races with 20 recovery injections, and invalid/exited-PID and process-termination checks.
 
 The initial concurrent race probe rejected a listener belonging to another active injection. The accepted 20-race run was serialized, and every round ended with zero pending bootstrap listeners. Prior acceptance remains scoped to the pinned Pixel 7a Android 13 arm64 device. This migration does not establish compatibility with other ART or kernel versions.
 
 The final fork full module, server, and pinned bridge passed 50 concurrent hook unloads with Java stack walking and 10 Settings spawns. Another 20 Settings spawns passed with the same final bridge before the module switch. Both module binaries match the final CI outputs. The boot ID and SELinux policy hash stayed unchanged; enforcement remained enabled. No new tombstone or kernel fault appeared after the inline-restoration fix.
 
-Raw local test records are retained under `.work/forks/final/`. The earlier failing preview is marked superseded; use release `17.26.2-pixel-5.10.2`.
+Raw local test records are retained under `.work/forks/final/`. The earlier preview failed the inline-restoration test. Current installs use the builder release linked above.

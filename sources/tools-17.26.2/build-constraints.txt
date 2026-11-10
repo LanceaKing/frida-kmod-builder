@@ -1,0 +1,4 @@
+meson-python==0.22.1
+meson==1.12.1
+packaging==26.3
+pyproject-metadata==0.12.1

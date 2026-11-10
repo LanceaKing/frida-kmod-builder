@@ -54,7 +54,7 @@ npm install --save-exact https://codeload.github.com/LanceaKing/frida-java-bridg
 ```
 
 Recompile that project's scripts after installation. Clean installs retain the fix.
-The [fork tools wheel](FORKS.md) also bundles this bridge for the standard CLI.
+The [bundled tools wheel](FORKS.md) also bundles this bridge for the standard CLI.
 Keep the [official server startup](INSTALL.md#full-mode-android-app-connection).
 
 ## Reproduce the concurrent unload test

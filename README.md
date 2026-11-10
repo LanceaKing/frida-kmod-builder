@@ -91,7 +91,7 @@ The original [kernel-only preset](presets/pixel-7a-android13-5.10.json) remains 
 It does not install automatic process hooks and returns `EOPNOTSUPP` for process thread creation.
 The separate [full preset](presets/pixel-7a-android13-5.10-full.json) adds a compatibility backport for this exact kernel and Frida 17.26.2.
 It remains experimental. The pinned device passed the bounded regression matrix with the server patches and the separate [Java bridge teardown patch](docs/JAVA-TEARDOWN.md).
-Install the pinned fork bridge in each script project and recompile its Java scripts. The [fork CLI](docs/FORKS.md) bundles this bridge. The server rebuild alone does not contain it.
+Install the pinned fork bridge in each script project and recompile its Java scripts. The [bundled CLI](docs/FORKS.md) bundles this bridge. The server rebuild alone does not contain it.
 The [patched server](docs/SERVER-ANDROID13-TLS.md) corrects TLS capacity and a connection leak during failed injection.
 Read the [acceptance record](docs/PIXEL-5.10-FULL.md) before loading it.
 Other 5.10 kernels and 32-bit Apps are outside the reviewed scope.
