@@ -1,11 +1,14 @@
 # Two source forks and one builder
 
-This repository maintains the source lock, dependency files, build scripts, and releases. Only two source forks are required.
+This repository maintains the source lock, dependency files, build scripts, and releases.
+The [branch and change audit](FORK-AUDIT.md) records the candidate scope; no fork changes have been merged into main. Only two source forks are required.
 The [core fork](https://github.com/LanceaKing/frida-core) contains kernel compatibility, TLS, and injection cleanup fixes.
 The [Java bridge fork](https://github.com/LanceaKing/frida-java-bridge) contains the script-unload fixes.
 The [compatibility index](COMPATIBILITY.md) links every former patch to its owning commit.
 
-The builder selects the core `common`, `full-5.10`, or `kernel-only` profile from [the source lock](../sources/frida-17.26.2.json).
+The builder uses one core commit from [the source lock](../sources/frida-17.26.2.json) for every module mode.
+`FRIDA_KERNEL_ONLY` disables process injection. `FRIDA_LINUX_510_BACKPORT` explicitly selects the tested Pixel 7a process ABI.
+The default path retains the upstream process ABI; a shared source branch does not imply support for every kernel.
 It builds tools from a fixed [official frida-tools commit](https://github.com/frida/frida-tools/commit/6bbae44a5df871524619337130471871ccc386dd).
 Only `bridges/package.json` and `bridges/package-lock.json` are replaced with the copies in `sources/tools-17.26.2/`.
 The build rejects unrelated dependency changes. A build-local npm wrapper maps the upstream helpers' `npm install` calls to `npm ci`.
@@ -28,7 +31,8 @@ python3.12 scripts/build_server.py --output dist/release
 ```
 
 The server script needs a clean build directory. Its default source checkout is `.work/server-source`.
-It uses the pinned core commit and records the compiler configuration in `server-build.json`.
+It uses the independent `server.core_commit` pin and records the compiler configuration in `server-build.json`.
+Source maintenance on fork `main` does not silently upgrade published server or tools binaries.
 The tools script uses a fresh temporary checkout and writes `tools-build.json` with source and dependency hashes.
 The server excludes 32-bit and emulated compatibility payloads. Its protocol version remains 17.26.2.
 

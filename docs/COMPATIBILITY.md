@@ -5,7 +5,7 @@ The old patch files remain available in Git history. Builds and npm installs use
 Artifacts include `frida-sources.json`. `build-info.json` records the selected core commit and source-lock hash.
 
 Before removing the 11 local patch files, each patch was applied to its corresponding fork commit's parent.
-Every resulting Git tree matched that fork commit exactly. Each commit is an ancestor of its selected source-lock profile.
+Every resulting Git tree matched that fork commit exactly. These historical commits remain reachable from the unified core history. The current module modes share one pinned core commit.
 
 | Change | Scope | Fork commit |
 | --- | --- | --- |
@@ -39,7 +39,7 @@ The separate [Java replacement-frame drain](https://github.com/LanceaKing/frida-
 Install the pinned fork bridge in the script project, then recompile the scripts.
 The kernel builder and server patches do not apply it. See the [teardown instructions and regression test](JAVA-TEARDOWN.md).
 
-The `kernel-only` fork profile includes [Kernel-only mode](https://github.com/LanceaKing/frida-core/commit/7a888d58a69b0141969762483af214c3ac43c2ff) and defines `FRIDA_KERNEL_ONLY`.
+The shared core source includes [Kernel-only mode](https://github.com/LanceaKing/frida-core/commit/7a888d58a69b0141969762483af214c3ac43c2ff) and defines `FRIDA_KERNEL_ONLY`.
 This excludes process thread creation and reparenting, which use newer fields and interfaces absent from Android 13 Linux 5.10.
 Thread injection returns `-EOPNOTSUPP`. The automatic process-hook installer returns without creating a worker or installing hooks.
 Kernel sessions through `/dev/frida` remain enabled. This patch does not change the kernel configuration.
@@ -82,9 +82,9 @@ It uses two-argument `detach_pid`, omits `free_pids` and the absent `quick_threa
 The creator owns the spawn context until the child completes setup. Failure paths release the target task and mm references.
 The target's exec lock excludes an address-space replacement during setup. Exit checks and reference acquisition run under the tasklist, task, and sighand locks.
 
-The full patch checks required symbols, preflights hook page mappings, checks all seven replacement results, and reverts installed hooks on failure.
+The current candidate checks required symbols, checks all seven replacement results, and reverts installed hooks on failure. The redundant hook-page preflight has been removed.
 It exposes the official prctl service only after initialization succeeds. Shutdown closes that service, reverts hooks, waits for active Gum callbacks, and drains the process worker.
-`trace_process_ops=1` logs operation names, target PID, result and created TID. It is off by default and does not log memory contents.
+The unified source omits the optional `trace_process_ops` diagnostic parameter. Older stage-triggered race records refer to the previous tested source.
 The ordinary Android server uses this service for App injection. The Barebone protocol remains unchanged.
 Runtime acceptance is tracked separately from compiled features in `build-info.json`.
 
