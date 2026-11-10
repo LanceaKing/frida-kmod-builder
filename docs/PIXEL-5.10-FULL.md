@@ -5,10 +5,10 @@ Status: **experimental; bounded regression passed on the pinned device with the 
 Revision `0bae5f8` passes the process probe, normal module reload, and a minimal kernel JavaScript session on the target device.
 The rebuilt server fixes the observed synthetic Bionic TLS capacity error.
 Direct server startup restores official SELinux initialization. The separate [Java bridge patch](JAVA-TEARDOWN.md) corrects premature callback release during script unload.
-Apply that patch in the script project and recompile its Java scripts. The server rebuild does not include this client-side dependency correction.
+Install the pinned fork bridge in the script project and recompile its Java scripts. The server rebuild does not include this client-side dependency correction.
 
 The scope is arm64 Apps, Frida 17.26.2, and kernel `5.10.157-android13-4-00003-g776d0a76f6aa-ab10208116` from source `776d0a76f6aa7c5a92c60afbe886a8e786953199`.
-The backport keeps the official prctl ABI. The latest device test uses the TLS and connection-cleanup server patches plus the Java bridge patch.
+The backport keeps the official prctl ABI. The historical matrix below uses the TLS and connection-cleanup server patches plus the first Java bridge correction. The [fork migration](FORKS.md) adds the ART inline-patch restoration fix and records the new validation.
 Barebone port 27042 serves kernel sessions. Android port 27043 serves App sessions through `KernelInjectSession`.
 
 ## Build and first device attempt

@@ -50,7 +50,7 @@ npm ci --prefix tests/device
 For a separate script project, pin the fork commit and keep its lock file:
 
 ```sh
-npm install --save-exact https://codeload.github.com/LanceaKing/frida-java-bridge/tar.gz/d36ddffe87558c23dc1c5b585028263b3fbabb33
+npm install --save-exact https://codeload.github.com/LanceaKing/frida-java-bridge/tar.gz/1245d0bbd84f68f3337e9f7a82316cef8d42294d
 ```
 
 Recompile that project's scripts after installation. Clean installs retain the fix.

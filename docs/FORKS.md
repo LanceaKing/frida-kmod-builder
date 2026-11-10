@@ -21,7 +21,7 @@ Install the tools wheel in an isolated environment with the matching client:
 ```sh
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install 'frida==17.26.2' 'https://github.com/LanceaKing/frida/releases/download/17.26.2-pixel-5.10.2/frida_tools-14.13.1.dev2-py3-none-any.whl'
+python -m pip install 'frida==17.26.2' 'https://github.com/LanceaKing/frida/releases/download/17.26.2-pixel-5.10.2/frida_tools-14.13.1.dev3-py3-none-any.whl'
 frida --version
 ```
 
