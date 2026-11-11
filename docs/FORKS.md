@@ -43,13 +43,13 @@ Module packaging checks the compressed server and extracted binary hashes before
 
 ## Install the bundled CLI
 
-The [builder release](https://github.com/LanceaKing/frida-kmod-builder/releases/tag/17.26.2-pixel-5.10.3) contains the server, tools wheel, modules, and provenance.
+The [unified bridge release](https://github.com/LanceaKing/frida-kmod-builder/releases/tag/17.26.2-unified.1) contains the updated tools wheel and its provenance. The independently pinned server and earlier exact-target modules remain in the [previous builder release](https://github.com/LanceaKing/frida-kmod-builder/releases/tag/17.26.2-pixel-5.10.3). Build modules for other kernels through Actions; the old release name does not select a source compatibility path.
 Install the wheel with the matching Frida client in an isolated environment:
 
 ```sh
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install 'frida==17.26.2' 'https://github.com/LanceaKing/frida-kmod-builder/releases/download/17.26.2-pixel-5.10.3/frida_tools-14.13.1.dev4-py3-none-any.whl#sha256=c0ed3dda8c4b89e7d185692262a075529bb09ae8a60584bfc15732793f547171'
+python -m pip install 'frida==17.26.2' 'https://github.com/LanceaKing/frida-kmod-builder/releases/download/17.26.2-unified.1/frida_tools-14.13.1.dev5-py3-none-any.whl#sha256=2e288dca21f471b31dde8eee7e3c495e74da71103cd16501639ab46a1fdb7339'
 frida --version
 ```
 
