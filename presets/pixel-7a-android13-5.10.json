@@ -7,7 +7,6 @@
   "system_map_url": "https://android.googlesource.com/platform/prebuilts/boot-artifacts/+/9a82ea5d2c4f2cf1dfc5bd2d2461263c9f30112c/kernel/System.map?format=TEXT",
   "kernel_config_sha256": "732e0ee8ce3d0e5d4b24494406cda13187596170f45976e39be7ba18518315b7",
   "kernel_clang_url": "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/425c8149f17c8d9914bf690b4d5abe45a13fb993/clang-r450784e.tar.gz",
-  "agent_mode": "kernel-only",
   "frida_version": "17.26.2",
   "include_server": "true"
 }

@@ -57,12 +57,7 @@ jobs:
           make -C kernel ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- gki_defconfig
           kernel/scripts/config --file kernel/.config -d CFI_CLANG -d CFI -d LTO_CLANG -d LTO_CLANG_THIN -d LTO_CLANG_FULL -e LTO_NONE -d WERROR
           make -C kernel -j4 ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig modules_prepare
-      - name: Compile full and kernel-only interfaces
+      - name: Compile the default upstream interfaces
         run: |
           glue="$PWD/core/src/barebone/agent/linux"
-          for mode in full kernel-only; do
-            rm -f "$glue/frida-kmod.o"
-            flags=""
-            if [ "$mode" = kernel-only ]; then flags=-DFRIDA_KERNEL_ONLY; fi
-            make -C "$glue" KDIR="$PWD/kernel" ARCH=arm64 BITS=64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- EXTRA_CFLAGS="$flags" check-kernel-abi
-          done
+          make -C "$glue" KDIR="$PWD/kernel" ARCH=arm64 BITS=64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- check-kernel-abi

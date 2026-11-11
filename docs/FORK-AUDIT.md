@@ -1,14 +1,14 @@
 # Fork branch and change audit
 
 This candidate uses one source for GKI 5.10 and the upstream kernel paths. It is not approved for merging into `main`.
-The core and Java bridge remain separate repositories because they own different failures.
+Only one default build is exposed. The builder has no GKI-specific profile or agent-mode switch. The core and Java bridge remain separate repositories because they own different failures.
 
 ## Branch decision
 
 | Former core branch | Necessary behavior | Separate maintained branch needed? |
 | --- | --- | --- |
 | `compat/17.26.2-common` | Shared module and injection fixes | No; these form the common source |
-| `compat/17.26.2-kernel-only` | PID 0 sessions without process injection | No; `FRIDA_KERNEL_ONLY` selects it |
+| `compat/17.26.2-kernel-only` | PID 0 sessions without process injection | Removed; PID 0 sessions remain in the default build |
 | `compat/17.26.2-full-5.10` | GKI 5.10 process ABI | No; ARM64 Linux 5.10 selects it automatically |
 
 The candidate retains the old commits in its ancestry, so existing release pins remain reachable.
@@ -52,18 +52,18 @@ Published server and tools assets keep their independently validated pins; this 
 ## Acceptance boundary
 
 Successful compilation and stress tests are regression evidence, not proof that every line is causally necessary or that all interleavings are covered.
-The candidate must pass both Pixel modes, the default Android 14 / 6.1 compile, and device lifecycle/teardown probes before review is concluded.
+The candidate must pass the default build on the available device, the default Android 14 / 6.1 compile, and device lifecycle/teardown probes before review is concluded.
 The default 6.1 build does not establish runtime acceptance on a 6.1 device.
 
 ## General GKI validation
 
-The kernel ABI workflow compiles full and kernel-only glue against pinned Android 12/13 GKI 5.10 and 5.15, 6.1, 6.6, 6.12, and 6.18 sources. These are compile checks, not device acceptance or complete module-link checks. CFI and LTO are disabled in this header matrix; the exact-target module builds exercise their actual configuration separately.
+The kernel ABI workflow compiles the default glue against pinned Android 12/13 GKI 5.10 and 5.15, 6.1, 6.6, 6.12, and 6.18 sources. These are compile checks, not device acceptance or complete module-link checks. CFI and LTO are disabled in this header matrix; the exact-target module builds exercise their actual configuration separately.
 
 The 5.10 process path requires the GKI configuration (`CONFIG_SCHED_AUTOGROUP=n`). Optional MTE, seccomp and cgroup helpers are resolved only when configured. The target headers determine whether secondary TLS and SCTLR state are present. Missing required runtime symbols fail initialization instead of using guessed offsets. Outside 5.10, process injection still requires the upstream `user_mode_thread` interface; passing the C compile matrix alone does not establish process-injection support for a kernel that lacks it. This does not promise support for arbitrary vendor modifications.
 
-The core source is pinned to `2933e5e4` on `compat/17.26.2-full-5.10`. The branch name is historical; source selection no longer uses the Pixel model or an exact 5.10 patch level. All official upstream branches remain in the fork.
+The core source is pinned to `36ee7291` on `compat/17.26.2-full-5.10`. The branch name is historical; source selection no longer uses the Pixel model or an exact 5.10 patch level. All official upstream branches remain in the fork.
 
-Validation for this source:
+Historical validation before mode removal (current validation is recorded in PR #3):
 
 - 37 builder tests pass.
 - The [ABI matrix](https://github.com/LanceaKing/frida-kmod-builder/actions/runs/42883495167) passes all eight pinned kernel source configurations in both modes. It includes the September 2021 Android 12 GKI release as well as current Android 12/13 5.10 sources.

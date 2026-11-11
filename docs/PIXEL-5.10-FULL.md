@@ -1,5 +1,7 @@
 # Pixel 7a full-mode acceptance record
 
+Historical device validation record. Current builds use one default feature set with automatic GKI 5.10 compatibility. References below to full/kernel-only variants describe older artifacts; kernel-only mode is no longer available.
+
 Status: **experimental; bounded regression passed on the pinned device with the server and Java bridge patches**.
 
 Revision `0bae5f8` passes the process probe, normal module reload, and a minimal kernel JavaScript session on the target device.

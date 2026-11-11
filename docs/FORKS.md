@@ -1,13 +1,15 @@
 # Two source forks and one builder
 
+Current builds use one default feature set. The dual-mode runs below are historical validation records; kernel-only mode has been removed.
+
 This repository maintains the source lock, dependency files, build scripts, and releases.
 The [branch and change audit](FORK-AUDIT.md) records the candidate scope; no fork changes have been merged into main. Only two source forks are required.
 The [core fork](https://github.com/LanceaKing/frida-core) contains kernel compatibility, TLS, and injection cleanup fixes.
 The [Java bridge fork](https://github.com/LanceaKing/frida-java-bridge) contains the script-unload fixes.
 The [compatibility index](COMPATIBILITY.md) links every former patch to its owning commit.
 
-The builder uses one core commit from [the source lock](../sources/frida-17.26.2.json) for every module mode.
-`FRIDA_KERNEL_ONLY` disables process injection. ARM64 Linux 5.10 automatically selects the GKI process ABI; optional ARM64 fields are detected from the target headers.
+The builder uses one core commit from [the source lock](../sources/frida-17.26.2.json) for all target kernels.
+ARM64 Linux 5.10 automatically selects the GKI process ABI; optional ARM64 fields are detected from the target headers.
 Other kernel families retain the upstream process ABI. Each module must be rebuilt against the exact target kernel configuration and symbols; a shared source branch does not make module binaries portable.
 It builds tools from a fixed [official frida-tools commit](https://github.com/frida/frida-tools/commit/6bbae44a5df871524619337130471871ccc386dd).
 Only `bridges/package.json` and `bridges/package-lock.json` are replaced with the copies in `sources/tools-17.26.2/`.
@@ -36,7 +38,7 @@ Source maintenance on fork `main` does not silently upgrade published server or 
 The tools script uses a fresh temporary checkout and writes `tools-build.json` with source and dependency hashes.
 The server excludes 32-bit and emulated compatibility payloads. Its protocol version remains 17.26.2.
 
-Build the modules with the existing Actions workflow and the full and kernel-only presets.
+Build modules through the single existing Actions workflow. The default build includes GKI 5.10 compatibility and process injection; presets only supply target kernel artifacts.
 Publish the server, tools wheel, both modules, their build records, the source lock, and checksums in this repository's release.
 Update the source-lock hashes before publishing. Download the assets again and check their hashes before accepting a release.
 Module packaging checks the compressed server and extracted binary hashes before replacing its output file.
@@ -53,7 +55,7 @@ python -m pip install 'frida==17.26.2' 'https://github.com/LanceaKing/frida-kmod
 frida --version
 ```
 
-For a direct module download, select the full or kernel-only `.ko` asset and copy it as `frida-agent.ko`.
+For historical releases, only the full `.ko` corresponds to the current feature set. New builds have no mode selector. Copy the module matching your target kernel as `frida-agent.ko`.
 Check the original asset hashes before renaming. Decompress the server archive and name its output `frida-server`.
 Then follow [the installation guide](INSTALL.md). Actions module bundles already use these filenames.
 

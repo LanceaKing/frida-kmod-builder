@@ -119,25 +119,17 @@ class ConfigurationTests(unittest.TestCase):
     def test_custom_kernel_accepts_explicit_sources(self):
         result = builder.configuration({
             "kernel_release": "5.10.157-vendor", "kernel_family": "custom",
-            "agent_mode": "kernel-only",
             "kernel_ref": "vendor-tag", "prepare_url": "https://example.com/prepared.tar.gz",
             "symvers_url": "https://example.com/Module.symvers", "kernel_clang_url": "system",
         })
         self.assertEqual(result["android_ci_build"], "")
         self.assertEqual(result["kernel_ref"], "vendor-tag")
 
-    def test_fork_modes_share_one_source_commit(self):
-        configs = [builder.configuration(builder.read_json(builder.ROOT / "presets" / name))
-                   for name in ("pixel-7a-android13-5.10.json", "pixel-7a-android13-5.10-full.json")]
-        sources = [builder.frida_source(c) for c in configs]
-        self.assertEqual([s["profile"] for s in sources], ["kernel-only", "full-5.10"])
-        self.assertEqual(sources[0]["commit"], sources[1]["commit"])
-        self.assertEqual(sources[0]["commit"], builder.frida_source(builder.configuration({}))["commit"])
-        self.assertEqual(sources[0]["repository"], sources[1]["repository"])
-        self.assertEqual(builder.frida_source(builder.configuration({}))["profile"], "common")
-        for source in sources:
-            self.assertRegex(source["commit"], r"^[0-9a-f]{40}$")
-            self.assertIn("LanceaKing/frida-core", source["repository"])
+    def test_kernel_targets_share_the_default_source(self):
+        preset = builder.read_json(builder.ROOT / "presets/pixel-7a-android13-5.10.json")
+        source = builder.frida_source(builder.configuration(preset))
+        self.assertEqual(source, builder.frida_source(builder.configuration({})))
+        self.assertNotIn("profile", source)
 
     def test_fork_source_rejects_unpinned_revision(self):
         c = builder.configuration({})
@@ -152,12 +144,12 @@ class ConfigurationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "No pinned fork"):
             builder.frida_source(c)
 
-    def test_full_510_accepts_gki_families_and_patch_levels(self):
+    def test_default_build_accepts_gki_families_and_patch_levels(self):
         for release in ("5.10.43-android12-9-g1234567-ab999",
                         "5.10.240-android13-4-gabcdef0-ab12345"):
             with self.subTest(release=release):
                 c = builder.configuration({"kernel_release": release})
-                self.assertEqual(builder.frida_source(c)["profile"], "full-5.10")
+                self.assertEqual(builder.frida_source(c), builder.frida_source(builder.configuration({})))
                 self.assertEqual(c["kernel_ref"], release.split("-g")[1].split("-")[0])
 
     def test_gki_symbol_map_accepts_prepared_artifacts(self):
@@ -183,11 +175,10 @@ class ConfigurationTests(unittest.TestCase):
         result = builder.configuration(values)
         self.assertEqual(result["prepare_url"], "")
 
-    def test_kernel_only_mode_is_explicit(self):
-        result = builder.configuration({"agent_mode": "kernel-only"})
-        self.assertTrue(result["artifact_name"].endswith("-kernel-only"))
-        with self.assertRaisesRegex(ValueError, "agent_mode"):
-            builder.configuration({"agent_mode": "partial"})
+    def test_removed_mode_is_rejected(self):
+        for mode in ("kernel-only", "full"):
+            with self.assertRaisesRegex(ValueError, "agent_mode was removed"):
+                builder.configuration({"agent_mode": mode})
 
     def test_image_and_prepared_archive_are_mutually_exclusive(self):
         with self.assertRaisesRegex(ValueError, "empty prepare_url"):
