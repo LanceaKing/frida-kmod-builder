@@ -29,6 +29,8 @@ The default values use the kernel build in Frida's upstream example.
 They are a build example, not a device recommendation.
 For a standard Android CI release, the workflow extracts the source commit and build ID from `-gCOMMIT-abBUILD`.
 For a vendor kernel, provide its exact source revision and prepared artifacts.
+If the exact release and source match a committed artifact preset, empty artifact inputs use that preset before trying Android CI.
+Explicit artifact URLs, CI overrides, or a different source keep their existing behavior. `configuration.json` records the selected preset.
 
 ## Inputs
 

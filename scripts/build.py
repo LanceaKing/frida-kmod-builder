@@ -62,6 +62,33 @@ def https_url(value):
     return value.rstrip("/")
 
 
+def apply_artifact_preset(c):
+    fields = ("prepare_url", "symvers_url", "kernel_image_url", "kernel_config_sha256", "system_map_url")
+    if any(c[key] for key in (*fields, "android_ci_build")) or c["android_ci_target"] != DEFAULTS["android_ci_target"]:
+        return
+    matches = []
+    for path in sorted((ROOT / "presets").glob("*.json")):
+        preset = read_json(path)
+        if preset.get("kernel_release") != c["kernel_release"]:
+            continue
+        if preset.get("kernel_repository", DEFAULTS["kernel_repository"]).rstrip("/") != c["kernel_repository"].rstrip("/"):
+            continue
+        ref = c["kernel_ref"]
+        if ref and (not re.fullmatch(r"[0-9a-f]{7,40}", ref) or not preset.get("kernel_ref", "").startswith(ref)):
+            continue
+        matches.append((path, preset))
+    require(len(matches) <= 1, "Multiple artifact presets match this kernel. Provide artifact URLs explicitly.")
+    if not matches:
+        return
+    path, preset = matches[0]
+    for key in fields:
+        c[key] = preset.get(key, "")
+    c["kernel_ref"] = c["kernel_ref"] or preset.get("kernel_ref", "")
+    if c["kernel_clang_url"] == "auto":
+        c["kernel_clang_url"] = preset.get("kernel_clang_url", "auto")
+    c["artifact_preset"] = path.name
+
+
 def configuration(values):
     require("agent_mode" not in values, "agent_mode was removed; use the default build.")
     c = {key: str(values.get(key, default)).strip() for key, default in DEFAULTS.items()}
@@ -71,6 +98,7 @@ def configuration(values):
     require(re.fullmatch(r"(?:\d+\.\d+\.\d+|stable|nightly-\d{4}-\d{2}-\d{2})", c["rust_toolchain"]), "Use a Rust version, stable, or a dated nightly.")
     require(c["include_server"] in ("true", "false"), "include_server must be true or false.")
     https_url(c["kernel_repository"])
+    apply_artifact_preset(c)
     family = re.match(r"(\d+\.\d+)\.\d+-?(android\d+)?", c["kernel_release"])
     require(family is not None, "The kernel release must start with major.minor.patch.")
     detected = f"{family[2]}-{family[1]}" if family[2] else "custom"

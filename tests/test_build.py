@@ -112,6 +112,35 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(result["kernel_family"], "android14-6.1")
         self.assertIn("14219743/kernel_aarch64/latest/raw/", result["prepare_url"])
 
+    def test_release_only_uses_exact_artifact_preset(self):
+        preset = builder.read_json(builder.ROOT / "presets/pixel-7a-android13-5.10.json")
+        # Actions supplies optional inputs as empty strings and compiler=auto.
+        values = dict(builder.DEFAULTS, kernel_release=preset["kernel_release"])
+        result = builder.configuration(values)
+        for key in ("kernel_ref", "kernel_image_url", "symvers_url", "system_map_url", "kernel_config_sha256", "kernel_clang_url"):
+            self.assertEqual(result[key], preset[key])
+        self.assertEqual(result["prepare_url"], "")
+        self.assertEqual(result["artifact_preset"], "pixel-7a-android13-5.10.json")
+        result = builder.configuration(dict(values, kernel_ref=preset["kernel_ref"][:12], kernel_clang_url="system"))
+        self.assertEqual(result["kernel_clang_url"], "system")
+        self.assertEqual(result["kernel_ref"], preset["kernel_ref"][:12])
+
+    def test_artifact_preset_does_not_override_explicit_sources(self):
+        preset = builder.read_json(builder.ROOT / "presets/pixel-7a-android13-5.10.json")
+        for overrides in (
+            {"kernel_repository": "https://example.com/kernel"},
+            {"kernel_ref": "custom-branch"},
+            {"android_ci_build": "12345"},
+            {"android_ci_target": "custom_target"},
+            {"prepare_url": "https://example.com/prepared.tar.gz", "symvers_url": "https://example.com/Module.symvers"},
+        ):
+            with self.subTest(overrides=overrides):
+                result = builder.configuration(dict(kernel_release=preset["kernel_release"], **overrides))
+                self.assertNotIn("artifact_preset", result)
+                self.assertEqual(result["kernel_image_url"], "")
+        with self.assertRaisesRegex(ValueError, "both"):
+            builder.configuration({"kernel_release": preset["kernel_release"], "symvers_url": "https://example.com/Module.symvers"})
+
     def test_custom_kernel_requires_both_artifacts(self):
         with self.assertRaisesRegex(ValueError, "both"):
             builder.configuration({"prepare_url": "https://example.com/prepared.tar.gz"})
