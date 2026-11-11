@@ -61,7 +61,7 @@ The kernel ABI workflow compiles the default glue against pinned Android 12/13 G
 
 The 5.10 process path requires the GKI configuration (`CONFIG_SCHED_AUTOGROUP=n`). Optional MTE, seccomp and cgroup helpers are resolved only when configured. The target headers determine whether secondary TLS and SCTLR state are present. Missing required runtime symbols fail initialization instead of using guessed offsets. Outside 5.10, process injection still requires the upstream `user_mode_thread` interface; passing the C compile matrix alone does not establish process-injection support for a kernel that lacks it. This does not promise support for arbitrary vendor modifications.
 
-The core source is pinned to `36ee7291` on `compat/17.26.2-full-5.10`. The branch name is historical; source selection no longer uses the Pixel model or an exact 5.10 patch level. All official upstream branches remain in the fork.
+The core source is pinned to `5a5df5e3` on `compat/17.26.2-full-5.10`. The branch name is historical; source selection no longer uses the Pixel model or an exact 5.10 patch level. All official upstream branches remain in the fork.
 
 Historical validation before mode removal (current validation is recorded in PR #3):
 
@@ -79,3 +79,13 @@ The Java bridge repair branch includes upstream `fc4445f1` and the teardown fixe
 Teardown now uses the upstream export-or-symbol lookup for thread enumeration and mutex functions. It preserves the constructor argument types selected by upstream for `StackVisitor` instead of rebuilding the function with a fixed `size_t` signature. JNI wrapper and exception handles remain valid until active replacement callbacks and ART frames drain. The upstream Android/architecture adapters remain intact, and Dalvik/JVM retain their existing disposal path.
 
 The tools dependency overlay and device-test lock both select the same bridge archive and integrity hash. The new wheel remains built from unchanged official tools source. Bridge lint, the builder checks and wheel build are checked separately from the kernel matrix. Current device acceptance is recorded in PR #3; other ART versions and CPU architectures still need their own runtime validation.
+
+## Minimal downstream audit
+
+The audit compared both repair branches with current official upstream: core `588ac3b3` and Java bridge `fc4445f1`. It found no upstream replacement for the retained fixes. The audit covers the downstream changes, not unrelated upstream features or documentation.
+
+Core cleanup removes obsolete instructions for the deleted kernel-only mode and manual 5.10 switch. It also removes a duplicate version-header include and a repeated thread-entry symbol check. The earlier check already returns on a missing symbol. Unrelated blank-line changes revert to upstream formatting. The build comment now describes all detected interfaces. The compatibility code, official entrypoints, failure rollback, worker credentials, module notifier cleanup, TLS capacity, and injection connection cleanup remain necessary for the documented build or runtime failures. The ABI check target remains in use by CI.
+
+Java bridge remains at `707a8e06`. Its five changed files contain only teardown-related changes: callback and cloned-method retention, ART frame inspection, suspended inline-patch restoration, and deferred wrapper/exception handle release. Its README is identical to upstream. Removing the callback count or JNI handle drain reintroduces the reproduced Settings failure. Reusing the ordinary stack visitor would release the JavaScript lock while ART locks are held, so the exclusive native wrappers remain separate. No additional bridge change is justified by this audit.
+
+These conclusions use source review and the recorded failure/recovery evidence. They do not prove that every possible implementation requires the same line count. Current CI and acceptance links are in PR #3. This cleanup does not change the Java bundle or the effective default execution path.
