@@ -35,7 +35,6 @@ try:
         results.append(record)
         session = script = None
         pid = a.pid
-        resumed = False
         cancel = frida.Cancellable()
         timer = threading.Timer(25, cancel.cancel)
         timer.start()
@@ -60,7 +59,6 @@ try:
                 else:
                     if a.spawn:
                         device.resume(pid)
-                        resumed = True
                     deadline = time.monotonic() + 15
                     while time.monotonic() < deadline:
                         kinds = {item['message'].get('payload', {}).get('kind')

@@ -284,7 +284,7 @@ def git_checkout(repository, ref, destination):
 
 def inspect_kernel(directory, expected_release):
     text = (directory / ".config").read_text()
-    options = dict(re.findall(r"^(CONFIG_\w+)=(.*)$", text, re.MULTILINE))
+    options = config_options(text)
     for name in ("ARM64", "MODULES", "KPROBES", "KALLSYMS_ALL"):
         require(options.get(f"CONFIG_{name}") == "y", f"The target requires CONFIG_{name}=y.")
     require(options.get("CONFIG_MODULE_SIG_FORCE") != "y", "The target forces module signatures. This workflow produces unsigned modules.")
@@ -367,7 +367,8 @@ def prepare_from_image(c, prepared):
     require(hashlib.sha256(original.encode()).hexdigest() == c["kernel_config_sha256"],
             "The image's embedded configuration does not match the target configuration SHA256.")
     (prepared / "original.config").write_text(original)
-    clang_url, clang_bin = prepare_compiler(c, config_options(original))
+    options = config_options(original)
+    clang_url, clang_bin = prepare_compiler(c, options)
     # Android 5.10 treats LLVM as a boolean and finds these tools through PATH.
     env["PATH"] = str(clang_bin) + os.pathsep + env["PATH"]
 
@@ -375,7 +376,6 @@ def prepare_from_image(c, prepared):
     # from the original exported-symbol table; do not change any kernel feature.
     normalized = original
     relocations = {}
-    options = config_options(original)
     key = "CONFIG_UNUSED_KSYMS_WHITELIST"
     if options.get(key, '""') != '""':
         whitelist = prepared / "abi_symbollist.raw"
@@ -422,10 +422,10 @@ def prepare():
         download(c["prepare_url"], WORK / "kernel-prepared.tar.gz")
         extract(WORK / "kernel-prepared.tar.gz", prepared)
         download(c["symvers_url"], prepared / "Module.symvers")
-        options = inspect_kernel(prepared, c["kernel_release"])
+    options = inspect_kernel(prepared, c["kernel_release"])
+    if not c["kernel_image_url"]:
         clang_url, clang_bin = prepare_compiler(c, options)
         preparation = {"method": "prepared-artifact"}
-    options = inspect_kernel(prepared, c["kernel_release"])
     write_json(WORK / "kernel-options.json", options)
     bootstrap = None
     if c["system_map_url"]:
@@ -448,7 +448,7 @@ def prepare():
     write_json(WORK / "sources.json", {
         "kernel_commit": kernel_commit, "frida_commit": frida_commit,
         "frida_repository": source["repository"],
-        "frida_source_lock_sha256": source["lock_sha256"], "frida_patches": [],
+        "frida_source_lock_sha256": source["lock_sha256"],
         "kernel_preparation": preparation,
         "symbol_bootstrap": bootstrap,
         "releng_commit": run("git", "rev-parse", "HEAD", cwd=WORK / "frida-core-fork/releng", capture=True).strip(),

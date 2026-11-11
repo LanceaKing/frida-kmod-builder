@@ -257,10 +257,8 @@ The runner supports attach, spawn, cancel-before-resume, and repeated sessions, 
 It also observes target survival after detach. Capture crash logs for the tested PIDs, including after the runner returns.
 The results above come from these probes; the scripts alone do not establish successful injection.
 
-Compile `tests/device/exit-on-injection.c` with an Android arm64 NDK compiler and push it to `/data/local/tmp/exit-on-injection`.
-Run `tests/device/app-exit-race.py` with the device serial, disposable target PID, package, server PID, trigger stage, and output path.
-The module must have `trace_process_ops=1`. The probe kills only the specified target and records kernel signal markers and server resources.
-An operation result in its JSON does not accept post-detach recovery by itself. Keep the crash-log and survival checks as separate gates.
+The stage-triggered exit tools used for the historical results above were removed with their obsolete `trace_process_ops` dependency.
+Current target-exit validation uses ordinary attach/termination races and recovery checks. It does not require diagnostic hooks in the module.
 
 The earlier `server-no-policy.c` launcher masked policy reads in a private mount namespace.
 It preserved the current policy but prevented official agent-file setup. The launcher has been removed.
