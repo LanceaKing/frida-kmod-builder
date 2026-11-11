@@ -6,7 +6,6 @@ import lzma
 import os
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 import build as builder
 
@@ -24,7 +23,8 @@ def main():
     source = args.source_dir.resolve()
     source.parent.mkdir(parents=True, exist_ok=True)
     commit = lock['server']['core_commit']
-    builder.require(commit in lock['core']['profiles'].values(), 'Server commit must be a pinned core profile.')
+    builder.require(len(commit) == 40 and all(c in '0123456789abcdef' for c in commit),
+                    'Server sources require a full commit SHA.')
     actual = builder.git_checkout(lock['core']['repository'], commit, source)
     builder.require(actual == commit, 'Fetched core differs from source lock.')
     builder.run('git', '-C', source, 'submodule', 'update', '--init', '--recursive', '--depth=1', 'releng')

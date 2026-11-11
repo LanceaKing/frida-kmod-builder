@@ -7,20 +7,23 @@ public final class TeardownWorkload {
   public static final AtomicLong calls = new AtomicLong();
   public static final AtomicLong failures = new AtomicLong();
   public static volatile boolean running;
+  public static TeardownWorkload echo(TeardownWorkload value) { return value; }
   public static void start(final int count, final long durationMs, final String output) throws Exception {
     if (alive.get() != 0) throw new IllegalStateException("already running");
     calls.set(0); failures.set(0); running = true;
     final Method method = System.class.getDeclaredMethod("identityHashCode", Object.class);
+    final Method echoMethod = TeardownWorkload.class.getDeclaredMethod("echo", TeardownWorkload.class);
     final long deadline = System.nanoTime() + durationMs * 1000000L;
     for (int i=0; i<count; i++) {
       alive.incrementAndGet();
       new Thread(new Runnable() { public void run() {
         try {
-          final Object object = new Object();
+          final TeardownWorkload object = new TeardownWorkload();
           final int expected = System.identityHashCode(object);
           while (running && System.nanoTime() < deadline) {
             int actual = ((Integer)method.invoke(null, object)).intValue();
             if (actual != expected) failures.incrementAndGet();
+            if (echoMethod.invoke(null, object) != object) failures.incrementAndGet();
             // Exercise ART stack walking while its inline redirects are removed.
             if (new Throwable().getStackTrace().length == 0) failures.incrementAndGet();
             calls.incrementAndGet();

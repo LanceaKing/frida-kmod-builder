@@ -1,0 +1,63 @@
+name: Kernel ABI compatibility
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - sources/frida-*.json
+      - .github/workflows/kernel-abi.yml
+permissions:
+  contents: read
+jobs:
+  compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - family: android12-5.10-2021-09
+            commit: aae44f81e3f55ebc8b52f0985b8cde6abf4d4ddb
+          - family: android12-5.10
+            commit: 9360e0b02a7f1595661f6a087ef4c439594475a7
+          - family: android13-5.10
+            commit: 9536d991bb596a507f46aafe6b5f64fe9e599e78
+          - family: android13-5.15
+            commit: e6654bf2f6c2c3c7b6af8897baa2a86991d3b5ac
+          - family: android14-6.1
+            commit: 498f91c17b0822a09aede17d26a63bf8c6813725
+          - family: android15-6.6
+            commit: e148935a1d484f8a9a0742acbb22ca966f8067df
+          - family: android16-6.12
+            commit: 105b5745f1d771060aa9fb7f75821f69bb2298fd
+          - family: android17-6.18
+            commit: 1afe39edbe66c201d26f23f2e3396583238f6842
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang-19 lld-19 llvm-19 flex bison libelf-dev libdw-dev zlib1g-dev libssl-dev bc gcc-aarch64-linux-gnu
+      - name: Select LLVM tools
+        run: echo /usr/lib/llvm-19/bin >> "$GITHUB_PATH"
+      - name: Fetch pinned sources
+        env:
+          KERNEL_COMMIT: ${{ matrix.commit }}
+        run: |
+          mkdir kernel
+          curl --fail --location --retry 3 "https://github.com/aosp-mirror/kernel_common/archive/$KERNEL_COMMIT.tar.gz" | tar -xz --strip-components=1 -C kernel
+          python3 - <<'PY'
+          import json, subprocess
+          lock = json.load(open('sources/frida-17.26.2.json'))['core']
+          subprocess.run(['git', 'init', 'core'], check=True)
+          subprocess.run(['git', '-C', 'core', 'fetch', '--depth=1', lock['repository'], lock['commit']], check=True)
+          subprocess.run(['git', '-C', 'core', 'checkout', '--detach', 'FETCH_HEAD'], check=True)
+          PY
+      - name: Prepare GKI headers
+        run: |
+          make -C kernel ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- gki_defconfig
+          kernel/scripts/config --file kernel/.config -d CFI_CLANG -d CFI -d LTO_CLANG -d LTO_CLANG_THIN -d LTO_CLANG_FULL -e LTO_NONE -d WERROR
+          make -C kernel -j4 ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig modules_prepare
+      - name: Compile the default upstream interfaces
+        run: |
+          glue="$PWD/core/src/barebone/agent/linux"
+          make -C "$glue" KDIR="$PWD/kernel" ARCH=arm64 BITS=64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- check-kernel-abi

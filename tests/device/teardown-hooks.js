@@ -3,6 +3,9 @@ import Java from 'frida-java-bridge';
 let workload;
 let output;
 let hits = 0;
+let objectCalls = 0;
+let pendingObjectCalls = 0;
+const usleep = new NativeFunction(Process.getModuleByName('libc.so').getExportByName('usleep'), 'int', ['uint']);
 
 rpc.exports = {
   prepare(data, token) {
@@ -22,6 +25,19 @@ rpc.exports = {
           hits++;
           return identity.call(this, object);
         };
+        const echo = workload.echo;
+        echo.implementation = function (object) {
+          pendingObjectCalls++;
+          try {
+            usleep(20000);
+            objectCalls++;
+            return object;
+          } finally {
+            pendingObjectCalls--;
+          }
+        };
+        // Populate the object-return type's cached JNI class wrapper before unload.
+        workload.echo(workload.$new());
         resolve({path, output});
       } catch (error) {
         reject(error);
@@ -36,6 +52,8 @@ rpc.exports = {
     Java.performNow(() => {
       result = {
         hits,
+        objectCalls,
+        pendingObjectCalls,
         calls: workload.calls.value.get().toString(),
         alive: workload.alive.value.get(),
         failures: workload.failures.value.get().toString()

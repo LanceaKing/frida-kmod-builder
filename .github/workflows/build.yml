@@ -59,13 +59,6 @@ on:
       system_map_url:
         description: 'Original System.map URL for Linux 5.10 GKI with trimmed kprobe exports'
         type: string
-      agent_mode:
-        description: 'kernel-only: PID 0 sessions; disable process injection and automatic hooks'
-        type: choice
-        default: full
-        options:
-          - full
-          - kernel-only
       kernel_clang_url:
         description: 'auto: Android compiler from .config; system: LLVM 19; or tar URL'
         type: string
@@ -103,7 +96,6 @@ jobs:
       KERNEL_IMAGE_URL: ${{ inputs.kernel_image_url }}
       KERNEL_CONFIG_SHA256: ${{ inputs.kernel_config_sha256 }}
       SYSTEM_MAP_URL: ${{ inputs.system_map_url }}
-      AGENT_MODE: ${{ inputs.agent_mode }}
       KERNEL_CLANG_URL: ${{ inputs.kernel_clang_url }}
       RUST_TOOLCHAIN: ${{ inputs.rust_toolchain }}
       MODULE_NAME: ${{ inputs.module_name }}

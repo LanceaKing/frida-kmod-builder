@@ -16,7 +16,7 @@
         "typescript": "^5.8.3"
     },
     "dependencies": {
-        "frida-java-bridge": "https://codeload.github.com/LanceaKing/frida-java-bridge/tar.gz/1245d0bbd84f68f3337e9f7a82316cef8d42294d",
+        "frida-java-bridge": "https://codeload.github.com/LanceaKing/frida-java-bridge/tar.gz/707a8e064553bb202abaebcae00dcc509579db32",
         "frida-objc-bridge": "^8.0.6",
         "frida-swift-bridge": "^3.0.2"
     }

@@ -21,8 +21,6 @@ ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / ".work"
 DIST = ROOT / "dist"
 DEFAULT_RELEASE = "6.1.145-android14-11-gc1de4747ac59-ab14219743"
-PIXEL_510_RELEASE = "5.10.157-android13-4-00003-g776d0a76f6aa-ab10208116"
-PIXEL_510_COMMIT = "776d0a76f6aa7c5a92c60afbe886a8e786953199"
 DEFAULTS = {
     "frida_version": "17.26.2",
     "kernel_release": DEFAULT_RELEASE,
@@ -36,7 +34,6 @@ DEFAULTS = {
     "kernel_image_url": "",
     "kernel_config_sha256": "",
     "system_map_url": "",
-    "agent_mode": "full",
     "kernel_clang_url": "auto",
     "rust_toolchain": "1.99.1",
     "module_name": "frida-agent",
@@ -66,13 +63,13 @@ def https_url(value):
 
 
 def configuration(values):
+    require("agent_mode" not in values, "agent_mode was removed; use the default build.")
     c = {key: str(values.get(key, default)).strip() for key, default in DEFAULTS.items()}
     require(re.fullmatch(r"\d+\.\d+\.\d+", c["frida_version"]), "Use a Frida release such as 17.26.2.")
     require(re.fullmatch(r"[A-Za-z0-9_.+-]{1,128}", c["kernel_release"]), "Enter the complete uname -r output.")
     require(re.fullmatch(r"[A-Za-z0-9_-]{1,48}", c["module_name"]), "Use a module name with letters, digits, _ or -.")
     require(re.fullmatch(r"(?:\d+\.\d+\.\d+|stable|nightly-\d{4}-\d{2}-\d{2})", c["rust_toolchain"]), "Use a Rust version, stable, or a dated nightly.")
     require(c["include_server"] in ("true", "false"), "include_server must be true or false.")
-    require(c["agent_mode"] in ("full", "kernel-only"), "agent_mode must be full or kernel-only.")
     https_url(c["kernel_repository"])
     family = re.match(r"(\d+\.\d+)\.\d+-?(android\d+)?", c["kernel_release"])
     require(family is not None, "The kernel release must start with major.minor.patch.")
@@ -105,13 +102,9 @@ def configuration(values):
     if c["kernel_clang_url"] not in ("auto", "system"):
         https_url(c["kernel_clang_url"])
     if c["system_map_url"]:
-        require(c["kernel_image_url"] and family[1] == "5.10",
-                "System.map bootstrap requires image preparation and Linux 5.10.")
-    if c["agent_mode"] == "full" and family[1] == "5.10":
-        require(c["kernel_release"] == PIXEL_510_RELEASE and c["kernel_ref"] == PIXEL_510_COMMIT
-                and c["frida_version"] == "17.26.2",
-                "The full 5.10 backport is limited to the pinned Pixel 7a kernel and Frida 17.26.2.")
-    c["artifact_name"] = f"{c['module_name']}-{c['frida_version']}-{c['kernel_release']}-{c['agent_mode']}"
+        require(family[1] == "5.10",
+                "System.map bootstrap requires Linux 5.10.")
+    c["artifact_name"] = f"{c['module_name']}-{c['frida_version']}-{c['kernel_release']}"
     return c
 
 
@@ -126,19 +119,14 @@ def frida_source(c):
     require(path.is_file(), f"No pinned fork sources exist for Frida {version}.")
     lock = read_json(path)
     require(lock["version"] == version, "The source lock has a different Frida version.")
-    profile = "common"
-    if c["agent_mode"] == "kernel-only":
-        profile = "kernel-only"
-    elif c["kernel_release"] == PIXEL_510_RELEASE:
-        profile = "full-5.10"
-    commit = lock["core"]["profiles"][profile]
+    commit = lock["core"]["commit"]
     require(re.fullmatch(r"[0-9a-f]{40}", commit), "Fork sources require a full commit SHA, not a branch or tag.")
     server = lock["server"]
     https_url(server["url"])
     for key in ("sha256", "binary_sha256"):
         require(re.fullmatch(r"[0-9a-f]{64}", server[key]), f"The fork server requires {key}.")
     return {"repository": https_url(lock["core"]["repository"]), "commit": commit,
-            "profile": profile, "lock_sha256": sha256(path), "server": server}
+            "lock_sha256": sha256(path), "server": server}
 
 
 def write_json(path, value):
@@ -267,7 +255,7 @@ def configure():
         with open(output, "a") as stream:
             stream.write(f"artifact_name={c['artifact_name']}\n")
             environment = {key: value for key, value in c.items()
-                           if key not in ("agent_mode", "module_name", "artifact_name", "include_server", "rust_toolchain")}
+                           if key not in ("module_name", "artifact_name", "include_server", "rust_toolchain")}
             environment["frida_source_lock_sha256"] = source["lock_sha256"]
             key = hashlib.sha256(json.dumps(environment, sort_keys=True).encode()).hexdigest()
             stream.write(f"environment_cache_key={key}\n")
@@ -296,7 +284,7 @@ def git_checkout(repository, ref, destination):
 
 def inspect_kernel(directory, expected_release):
     text = (directory / ".config").read_text()
-    options = dict(re.findall(r"^(CONFIG_\w+)=(.*)$", text, re.MULTILINE))
+    options = config_options(text)
     for name in ("ARM64", "MODULES", "KPROBES", "KALLSYMS_ALL"):
         require(options.get(f"CONFIG_{name}") == "y", f"The target requires CONFIG_{name}=y.")
     require(options.get("CONFIG_MODULE_SIG_FORCE") != "y", "The target forces module signatures. This workflow produces unsigned modules.")
@@ -379,7 +367,8 @@ def prepare_from_image(c, prepared):
     require(hashlib.sha256(original.encode()).hexdigest() == c["kernel_config_sha256"],
             "The image's embedded configuration does not match the target configuration SHA256.")
     (prepared / "original.config").write_text(original)
-    clang_url, clang_bin = prepare_compiler(c, config_options(original))
+    options = config_options(original)
+    clang_url, clang_bin = prepare_compiler(c, options)
     # Android 5.10 treats LLVM as a boolean and finds these tools through PATH.
     env["PATH"] = str(clang_bin) + os.pathsep + env["PATH"]
 
@@ -387,7 +376,6 @@ def prepare_from_image(c, prepared):
     # from the original exported-symbol table; do not change any kernel feature.
     normalized = original
     relocations = {}
-    options = config_options(original)
     key = "CONFIG_UNUSED_KSYMS_WHITELIST"
     if options.get(key, '""') != '""':
         whitelist = prepared / "abi_symbollist.raw"
@@ -434,10 +422,10 @@ def prepare():
         download(c["prepare_url"], WORK / "kernel-prepared.tar.gz")
         extract(WORK / "kernel-prepared.tar.gz", prepared)
         download(c["symvers_url"], prepared / "Module.symvers")
-        options = inspect_kernel(prepared, c["kernel_release"])
+    options = inspect_kernel(prepared, c["kernel_release"])
+    if not c["kernel_image_url"]:
         clang_url, clang_bin = prepare_compiler(c, options)
         preparation = {"method": "prepared-artifact"}
-    options = inspect_kernel(prepared, c["kernel_release"])
     write_json(WORK / "kernel-options.json", options)
     bootstrap = None
     if c["system_map_url"]:
@@ -459,8 +447,8 @@ def prepare():
 
     write_json(WORK / "sources.json", {
         "kernel_commit": kernel_commit, "frida_commit": frida_commit,
-        "frida_repository": source["repository"], "frida_source_profile": source["profile"],
-        "frida_source_lock_sha256": source["lock_sha256"], "frida_patches": [],
+        "frida_repository": source["repository"],
+        "frida_source_lock_sha256": source["lock_sha256"],
         "kernel_preparation": preparation,
         "symbol_bootstrap": bootstrap,
         "releng_commit": run("git", "rev-parse", "HEAD", cwd=WORK / "frida-core-fork/releng", capture=True).strip(),
@@ -487,7 +475,7 @@ def build():
     extra_args = []
     if c["kernel_image_url"]:
         extra_args += [f"KERNELRELEASE={c['kernel_release']}", "LLVM_IAS=1", "CROSS_COMPILE=aarch64-linux-gnu-"]
-    definitions = ["-DFRIDA_KERNEL_ONLY"] if c["agent_mode"] == "kernel-only" else []
+    definitions = []
     if sources.get("symbol_bootstrap"):
         offset = sources["symbol_bootstrap"]["kallsyms_lookup_name_offset"]
         definitions += ["-DFRIDA_GKI_TRIMMED_EXPORTS", f"-DFRIDA_KALLSYMS_LOOKUP_OFFSET={offset}UL"]
@@ -545,11 +533,6 @@ def package():
     require("AArch64" in elf and "REL (Relocatable file)" in elf, "The output must be an AArch64 relocatable ELF module.")
     shutil.copy2(WORK / "frida-core-fork/src/barebone/agent/etc/linux-kmod.json", DIST / "linux-kmod.json")
     shutil.copy2(ROOT / "docs/INSTALL.md", DIST / "INSTALL.md")
-    if c["agent_mode"] == "kernel-only":
-        note = ("This is a kernel-session-only build. Connect with `-p 0`.\n"
-                "Process thread injection returns EOPNOTSUPP. Automatic process hooks are disabled.\n\n")
-        install = DIST / "INSTALL.md"
-        install.write_text(note + install.read_text())
     shutil.copy2(ROOT / "THIRD_PARTY_NOTICES.md", DIST / "THIRD_PARTY_NOTICES.md")
     shutil.copy2(WORK / "frida-core-fork/COPYING", DIST / "LICENSE.frida-core")
     shutil.copy2(WORK / "kernel-source/COPYING", DIST / "LICENSE.kernel")
@@ -565,8 +548,8 @@ def package():
         "rust_compiler": run("rustup", "run", c["rust_toolchain"], "rustc", "--version", capture=True).strip(),
         "builder_commit": os.environ.get("GITHUB_SHA", "local"),
         "run_url": f"https://github.com/{os.environ.get('GITHUB_REPOSITORY', '')}/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}",
-        "features": {"kernel_session": True, "process_thread_injection": c["agent_mode"] == "full",
-                     "automatic_process_hooks": c["agent_mode"] == "full"},
+        "features": {"kernel_session": True, "process_thread_injection": True,
+                     "automatic_process_hooks": True},
         "support_status": "built, not device-validated",
         "device_validation": {"status": "not performed", "kernel_injection": "not tested",
                               "native_hook": "not tested", "java_hook": "not tested",

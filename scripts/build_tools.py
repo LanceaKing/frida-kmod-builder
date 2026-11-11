@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build official frida-tools with the pinned Java bridge dependency."""
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -25,7 +26,7 @@ def digest(path):
 def configure_dependencies(source, overlay, bridge):
     original = json.loads((source / 'bridges/package.json').read_text())
     selected = json.loads((overlay / 'package.json').read_text())
-    expected = json.loads(json.dumps(original))
+    expected = copy.deepcopy(original)
     expected['dependencies']['frida-java-bridge'] = bridge
     if selected != expected:
         raise ValueError('The tools overlay must change only the Java bridge dependency.')
@@ -34,7 +35,7 @@ def configure_dependencies(source, overlay, bridge):
     entry = selected_lock['packages']['node_modules/frida-java-bridge']
     if entry.get('resolved') != bridge or not entry.get('integrity', '').startswith('sha512-'):
         raise ValueError('The bridge archive must have a locked URL and integrity hash.')
-    expected_lock = json.loads(json.dumps(original_lock))
+    expected_lock = copy.deepcopy(original_lock)
     expected_lock['packages']['']['dependencies']['frida-java-bridge'] = bridge
     expected_lock['packages']['node_modules/frida-java-bridge'] = entry
     if selected_lock != expected_lock:
