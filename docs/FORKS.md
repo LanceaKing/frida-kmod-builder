@@ -49,7 +49,7 @@ Install the wheel with the matching Frida client in an isolated environment:
 ```sh
 python3 -m venv .venv
 . .venv/bin/activate
-python -m pip install 'frida==17.26.2' 'https://github.com/LanceaKing/frida-kmod-builder/releases/download/17.26.2-unified.1/frida_tools-14.13.1.dev5-py3-none-any.whl#sha256=2e288dca21f471b31dde8eee7e3c495e74da71103cd16501639ab46a1fdb7339'
+python -m pip install 'frida==17.26.2' 'https://github.com/LanceaKing/frida-kmod-builder/releases/download/17.26.2-unified.1/frida_tools-14.13.1.dev7-py3-none-any.whl#sha256=676d320ae08961771d75135f9f31c07998adc6d96369f46fbbcba426e9ed45bc'
 frida --version
 ```
 

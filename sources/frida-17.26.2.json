@@ -8,16 +8,16 @@
   "java_bridge": {
     "repository": "https://github.com/LanceaKing/frida-java-bridge.git",
     "version": "7.0.13",
-    "commit": "c145208a1b0b97513dc32df85a5e843f06aec26d",
-    "archive": "https://codeload.github.com/LanceaKing/frida-java-bridge/tar.gz/c145208a1b0b97513dc32df85a5e843f06aec26d",
+    "commit": "707a8e064553bb202abaebcae00dcc509579db32",
+    "archive": "https://codeload.github.com/LanceaKing/frida-java-bridge/tar.gz/707a8e064553bb202abaebcae00dcc509579db32",
     "upstream_commit": "fc4445f18f525d305af71f7f2f838bf1630cbbd5"
   },
   "tools": {
     "repository": "https://github.com/frida/frida-tools.git",
     "commit": "6bbae44a5df871524619337130471871ccc386dd",
-    "wheel_url": "https://github.com/LanceaKing/frida-kmod-builder/releases/download/17.26.2-unified.1/frida_tools-14.13.1.dev5-py3-none-any.whl",
-    "wheel_sha256": "2e288dca21f471b31dde8eee7e3c495e74da71103cd16501639ab46a1fdb7339",
-    "version": "14.13.1-dev.5",
+    "wheel_url": "https://github.com/LanceaKing/frida-kmod-builder/releases/download/17.26.2-unified.1/frida_tools-14.13.1.dev7-py3-none-any.whl",
+    "wheel_sha256": "676d320ae08961771d75135f9f31c07998adc6d96369f46fbbcba426e9ed45bc",
+    "version": "14.13.1-dev.7",
     "dependencies": "sources/tools-17.26.2"
   },
   "server": {

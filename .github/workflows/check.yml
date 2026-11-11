@@ -20,6 +20,8 @@ jobs:
           node --check tests/device/node_modules/frida-java-bridge/index.js
           node --check tests/device/node_modules/frida-java-bridge/lib/android.js
           node --check tests/device/node_modules/frida-java-bridge/lib/class-factory.js
+          node --check tests/device/node_modules/frida-java-bridge/lib/vm.js
+          node --check tests/device/node_modules/frida-java-bridge/lib/env.js
   tools:
     runs-on: ubuntu-24.04
     timeout-minutes: 20

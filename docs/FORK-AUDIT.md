@@ -74,8 +74,8 @@ The matrix compiles kernel-facing C code, not a bootable kernel or a universally
 
 ## Unified Java bridge
 
-The Java bridge repair branch includes upstream `fc4445f1` and the teardown fix at `c145208a`. It does not select behavior by device model or Linux version. Kernel compatibility belongs to the core fork; bridge compatibility depends on the VM, ART symbols, CPU architecture and Android/APEX interfaces.
+The Java bridge repair branch includes upstream `fc4445f1` and the teardown fixes through `707a8e06`. It does not select behavior by device model or Linux version. Kernel compatibility belongs to the core fork; bridge compatibility depends on the VM, ART symbols, CPU architecture and Android/APEX interfaces.
 
-Teardown now uses the upstream export-or-symbol lookup for thread enumeration and mutex functions. It preserves the constructor argument types selected by upstream for `StackVisitor` instead of rebuilding the function with a fixed `size_t` signature. The upstream Android/architecture adapters remain intact, and Dalvik/JVM retain their existing disposal path.
+Teardown now uses the upstream export-or-symbol lookup for thread enumeration and mutex functions. It preserves the constructor argument types selected by upstream for `StackVisitor` instead of rebuilding the function with a fixed `size_t` signature. JNI wrapper and exception handles remain valid until active replacement callbacks and ART frames drain. The upstream Android/architecture adapters remain intact, and Dalvik/JVM retain their existing disposal path.
 
 The tools dependency overlay and device-test lock both select the same bridge archive and integrity hash. The new wheel remains built from unchanged official tools source. Bridge lint, the builder checks and wheel build are checked separately from the kernel matrix. Current device acceptance is recorded in PR #3; other ART versions and CPU architectures still need their own runtime validation.

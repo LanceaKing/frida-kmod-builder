@@ -61,7 +61,7 @@ try:
                 deadline = time.monotonic() + 1.5
                 while True:
                     before = script.exports_sync.counts()
-                    if before['hits'] > 10 and int(before['calls']) > 0:
+                    if before['hits'] > 10 and before['objectCalls'] > 1 and before['pendingObjectCalls'] > 0 and int(before['calls']) > 0:
                         break
                     assert time.monotonic() < deadline, before
                     time.sleep(0.01)

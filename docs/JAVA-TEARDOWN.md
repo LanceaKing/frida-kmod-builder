@@ -1,6 +1,6 @@
 # Java hook teardown on Android 13
 
-The teardown patch targets `frida-java-bridge` 7.0.13 on the pinned Android 13 arm64 device.
+The teardown patch extends `frida-java-bridge` 7.0.13 and upstream ART compatibility changes. Runtime validation uses the available Android 13 arm64 device; no device-model or kernel-patch selector is added.
 It leaves Frida's server entrypoint, SELinux helper, kernel module, and injection protocol unchanged.
 Frida 17 loads this Java bridge from the script project. Rebuilding the server alone does not apply this patch to user scripts.
 
@@ -21,11 +21,11 @@ It retains the replacement callbacks and cloned methods, removes their dispatch 
 It then suspends ART threads and walks their stacks under the ART thread-list lock.
 The native walk retains the JavaScript lock throughout the inspection.
 If a frame still references a replacement, it resumes the threads and repeats the inspection later.
-It releases the resources and unpins the script only after those frames disappear.
+It releases the resources and unpins the script only after those frames disappear and the bridge records no active JavaScript replacement calls.
 The timer schedules another inspection. A fixed elapsed delay never authorizes resource release.
 
 This patch covers script unload. It does not change standalone assignments to `method.implementation = null` during a running script.
-The new inspection uses private ART exports. Other Android versions and architectures need separate validation.
+The inspection uses the upstream ART export-or-symbol resolver and selected stack-visitor ABI. Other Android versions and architectures need separate validation.
 The existing JVM and Dalvik disposal paths remain unchanged.
 
 The thread-list lock requirement comes from [ART's `ThreadList::ForEach` declaration](https://android.googlesource.com/platform/art/+/refs/tags/android-13.0.0_r75/runtime/thread_list.h#140).
@@ -39,6 +39,14 @@ The arm64 inline redirect stores its trampoline address at that location. Restor
 
 The fork wraps global patch restoration in ART `SuspendAll` / `ResumeAll`. It restores the redirects and releases their trampolines while managed threads are suspended. The existing non-ART path is unchanged. This is a ten-line addition to `lib/android.js`; it preserves the earlier replacement-frame drain.
 
+## JNI wrapper lifetime during unload
+
+The unified-source candidate at `c145208a` passed 50 concurrent integer-return hook unloads and 30 application attaches, but Settings spawn still reproduced a SIGSEGV in ART `CallBooleanMethod`. A held-callback diagnostic showed `drain active=false callbacks=0,1,0`: the ART stack check did not cover an active JavaScript callback. Waiting for that counter alone still reproduced the crash.
+
+Script unload invokes weak callbacks even for wrappers still reachable from active code. Their JNI global references must survive the asynchronous drain too. ART handle destructors now pin the script and schedule their release after the weak-callback batch, so the runtime can start its drain regardless of weak-callback order. Releases during the drain are queued until both replacement frames and active callbacks have cleared. Exception wrappers use the same handle destructor. JVM and Dalvik keep immediate release.
+
+The diagnostic held the startup callback for 500 ms to expose this ordering; that delay and its logging are not part of the fix. The regression fixture also exercises a typed object return and unloads while object callbacks are active. Neither a sleep duration nor a successful compile authorizes resource release.
+
 ## Install the fork bridge
 
 Run these commands from the builder repository on the host:
@@ -50,7 +58,7 @@ npm ci --prefix tests/device
 For a separate script project, pin the fork commit and keep its lock file:
 
 ```sh
-npm install --save-exact https://codeload.github.com/LanceaKing/frida-java-bridge/tar.gz/c145208a1b0b97513dc32df85a5e843f06aec26d
+npm install --save-exact https://codeload.github.com/LanceaKing/frida-java-bridge/tar.gz/707a8e064553bb202abaebcae00dcc509579db32
 ```
 
 Recompile that project's scripts after installation. Clean installs retain the fix.
@@ -61,7 +69,7 @@ Keep the [official server startup](INSTALL.md#full-mode-android-app-connection).
 
 `TeardownWorkload.java` runs four Java threads independently of the Frida script.
 They repeatedly call `System.identityHashCode` through reflection and compare its return value with the original value.
-They also capture Java stack traces to exercise ART inline redirects during unload.
+They also call a typed object-return method and check object identity. Its hook yields through a native sleep so the host can request unload during a callback. They capture Java stack traces to exercise ART inline redirects during unload.
 The host unloads the hook while those threads run, observes process survival, and reads their final result.
 A unique output path prevents a previous run from supplying a false success.
 The runner fails on a JavaScript error, a changed return value, an early process exit, or a cleanup timeout.
@@ -122,4 +130,6 @@ The repository excludes device logs and binaries.
 
 ## Fork follow-up acceptance
 
-The [fork migration record](FORKS.md) supersedes the earlier acceptance for current installs. The ten-line inline-restoration correction passed 50 concurrent unloads with Java stack walking on the fork full module and 30 Settings spawns using the final pinned bridge, including 10 on that module. No new tombstone appeared after the fix. The server entrypoints and SELinux helper remain unchanged.
+The earlier fork migration validation covered the inline-restoration correction; it did not cover the later JNI wrapper race above. The ten-line inline-restoration correction passed 50 concurrent unloads with Java stack walking on the fork full module and 30 Settings spawns using that earlier bridge, including 10 on that module. No new tombstone appeared after the fix. The server entrypoints and SELinux helper remain unchanged.
+
+The current source and tools pins include the wrapper-lifetime correction. [PR #3](https://github.com/LanceaKing/frida-kmod-builder/pull/3) records acceptance for that exact commit. The prior pass counts do not substitute for its regression.
