@@ -2,10 +2,10 @@
 
 [中文说明](docs/README.zh-CN.md) · [Run a build](https://github.com/LanceaKing/frida-kmod-builder/actions/workflows/build.yml)
 
-Do not load artifacts from commit `d5f6682` or earlier on the Pixel 7a Android 13 preset.
+Do not load artifacts from commit `d5f6682` or earlier on Pixel 7a with Android 13.
 A device test caused a kernel panic during agent startup.
 The builder now removes the conflicting ELF flag. See the [pinned-device acceptance record](docs/PIXEL-5.10-FULL.md) for subsequent validation.
-Read the [incident report](docs/PIXEL-5.10-PANIC.md) before using this preset.
+Read the [incident report](docs/PIXEL-5.10-PANIC.md) before loading a module on that device.
 
 Build `frida-agent.ko` for an Android arm64 kernel with GitHub Actions.
 Select the kernel family, complete kernel release, Frida version, and source artifacts in the **Run workflow** form.
@@ -29,8 +29,11 @@ The default values use the kernel build in Frida's upstream example.
 They are a build example, not a device recommendation.
 For a standard Android CI release, the workflow extracts the source commit and build ID from `-gCOMMIT-abBUILD`.
 For a vendor kernel, provide its exact source revision and prepared artifacts.
-If the exact release and source match a committed artifact preset, empty artifact inputs use that preset before trying Android CI.
-Explicit artifact URLs, CI overrides, or a different source keep their existing behavior. `configuration.json` records the selected preset.
+All targets use one automatic flow. No device preset is required.
+The workflow tries Android CI first. If an automatic artifact URL returns HTTP 404 or 410, it searches the official Android archive.
+Archive discovery applies to official `kernel/common` sources and the `kernel_aarch64` CI target.
+The archive must match both the build ID and source commit. The image must contain the complete requested kernel release.
+Explicit artifact URLs keep their supplied sources. `configuration.json` records the resolved URLs and archive commit.
 
 ## Inputs
 
@@ -46,7 +49,7 @@ Explicit artifact URLs, CI overrides, or a different source keep their existing 
 | `prepare_url` | Public HTTPS URL for a prepared kernel archive. Set with `symvers_url`. |
 | `symvers_url` | Public HTTPS URL for `Module.symvers` from the same build. |
 | `kernel_image_url` | Original `Image` or `Image.lz4` URL for rebuilding an expired prepared tree. Set with `symvers_url`; leave `prepare_url` empty. |
-| `kernel_config_sha256` | SHA256 of the decompressed device configuration. Required in image preparation mode. |
+| `kernel_config_sha256` | SHA256 of the decompressed device configuration. Required when you supply `kernel_image_url`. |
 | `system_map_url` | Original `System.map` for Linux 5.10 GKI builds that trim kprobe exports. Works with prepared artifacts or image preparation. |
 | `kernel_clang_url` | `auto`, `system`, or an HTTPS compiler archive URL. See below. |
 | `rust_toolchain` | Rust version or dated nightly for the agent. Default: `1.99.1`. |
@@ -73,8 +76,9 @@ Kernel versions, vendor changes, and upstream Frida support can impose further r
 The agent uses LLVM 19 and the `none-arm64-softfloat_nopic` SDK selected by Frida's pinned `releng` revision.
 The kernel wrapper uses a separate compiler.
 With `kernel_clang_url=auto`, the script reads the Android compiler revision from `.config`.
-It downloads that compiler from the corresponding `androidN-release` prebuilt branch.
-If that branch lacks the revision, supply the exact compiler archive URL yourself.
+It searches official prebuilt branches for the corresponding Android generation and exact compiler revision.
+The download URL uses the resolved commit, so later branch changes cannot change that build.
+If the archive lacks the revision, supply the original compiler archive URL.
 The archive must contain `bin/clang` at its root.
 
 `kernel_clang_url=system` selects the runner's LLVM 19 for the kernel wrapper too.
@@ -83,18 +87,20 @@ The build fails if kbuild changes the supplied `.config` or the output version s
 The workflow does not change CFI, page size, module signatures, or symbol-version checks to make a build pass.
 
 When Android CI artifacts have expired, image preparation can restore the generated headers from the exact source, original kernel image, embedded configuration, and original symbol CRC table.
-The builder verifies the image banner, configuration hash, and source commit before running `olddefconfig` and `modules_prepare`.
+The builder checks the image banner and source commit before running `olddefconfig` and `modules_prepare`.
+For an automatically discovered official image, it records the embedded configuration SHA256. This does not prove equality with a vendor device configuration.
+For an explicit image URL, it also requires the supplied device configuration SHA256 to match.
 It relocates `CONFIG_UNUSED_KSYMS_WHITELIST` to a runner-local path and rejects any other option change.
 Gitiles blob URLs ending in `?format=TEXT` are decoded from base64 automatically.
-The [Pixel 7a Android 13 preset](presets/pixel-7a-android13-5.10.json) uses this path for build `10208116`.
 
 There is one default build. It includes both PID 0 kernel sessions and process injection, with the GKI 5.10 adapter selected automatically by target headers. No separate 5.10 edition or reduced kernel-only mode is required.
-The preset supplies target build artifacts only; it does not select different Frida features.
 Install the pinned fork bridge in each script project and recompile its Java scripts. The [bundled CLI](docs/FORKS.md) bundles this bridge. The server rebuild alone does not contain it.
 The [patched server](docs/SERVER-ANDROID13-TLS.md) corrects TLS capacity and a connection leak during failed injection.
 Read the [acceptance record](docs/PIXEL-5.10-FULL.md) before loading it.
 Other kernel families have compile coverage; runtime acceptance remains limited to the tested device and architecture.
-The preset also provides the original `System.map`. The builder derives the offset of `kallsyms_lookup_name` from `_text`; at load time, the exported `kimage_vaddr` supplies the relocated image base.
+For GKI 5.10 with trimmed exports, the automatic flow also locates the original `System.map`.
+Custom builds can supply `system_map_url`.
+The builder derives the offset of `kallsyms_lookup_name` from `_text`. At load time, the exported `kimage_vaddr` supplies the relocated image base.
 This handles trimmed GKI exports without adding invented symbol CRCs or requiring a runtime address parameter.
 The glue functions that call unexported targets use local `__nocfi` annotations because legacy CFI may omit jump-table entries for those targets. The kernel CFI, LTO, and MODVERSIONS configuration remains enabled.
 

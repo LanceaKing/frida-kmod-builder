@@ -15,7 +15,8 @@ import subprocess
 import sys
 import tarfile
 import urllib.parse
-import urllib.request
+
+import artifacts
 
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / ".work"
@@ -62,33 +63,6 @@ def https_url(value):
     return value.rstrip("/")
 
 
-def apply_artifact_preset(c):
-    fields = ("prepare_url", "symvers_url", "kernel_image_url", "kernel_config_sha256", "system_map_url")
-    if any(c[key] for key in (*fields, "android_ci_build")) or c["android_ci_target"] != DEFAULTS["android_ci_target"]:
-        return
-    matches = []
-    for path in sorted((ROOT / "presets").glob("*.json")):
-        preset = read_json(path)
-        if preset.get("kernel_release") != c["kernel_release"]:
-            continue
-        if preset.get("kernel_repository", DEFAULTS["kernel_repository"]).rstrip("/") != c["kernel_repository"].rstrip("/"):
-            continue
-        ref = c["kernel_ref"]
-        if ref and (not re.fullmatch(r"[0-9a-f]{7,40}", ref) or not preset.get("kernel_ref", "").startswith(ref)):
-            continue
-        matches.append((path, preset))
-    require(len(matches) <= 1, "Multiple artifact presets match this kernel. Provide artifact URLs explicitly.")
-    if not matches:
-        return
-    path, preset = matches[0]
-    for key in fields:
-        c[key] = preset.get(key, "")
-    c["kernel_ref"] = c["kernel_ref"] or preset.get("kernel_ref", "")
-    if c["kernel_clang_url"] == "auto":
-        c["kernel_clang_url"] = preset.get("kernel_clang_url", "auto")
-    c["artifact_preset"] = path.name
-
-
 def configuration(values):
     require("agent_mode" not in values, "agent_mode was removed; use the default build.")
     c = {key: str(values.get(key, default)).strip() for key, default in DEFAULTS.items()}
@@ -98,7 +72,6 @@ def configuration(values):
     require(re.fullmatch(r"(?:\d+\.\d+\.\d+|stable|nightly-\d{4}-\d{2}-\d{2})", c["rust_toolchain"]), "Use a Rust version, stable, or a dated nightly.")
     require(c["include_server"] in ("true", "false"), "include_server must be true or false.")
     https_url(c["kernel_repository"])
-    apply_artifact_preset(c)
     family = re.match(r"(\d+\.\d+)\.\d+-?(android\d+)?", c["kernel_release"])
     require(family is not None, "The kernel release must start with major.minor.patch.")
     detected = f"{family[2]}-{family[1]}" if family[2] else "custom"
@@ -125,6 +98,7 @@ def configuration(values):
     if not c["prepare_url"] and not c["kernel_image_url"]:
         require(c["android_ci_build"], "Provide an Android CI build or both custom artifact URLs.")
         base = f"https://ci.android.com/builds/submitted/{c['android_ci_build']}/{c['android_ci_target']}/latest/raw"
+        c["artifact_source"] = "android-ci"
         c["prepare_url"] = base + "/modules_prepare_outdir.tar.gz"
         c["symvers_url"] = base + f"/{c['android_ci_target']}_Module.symvers"
     if c["kernel_clang_url"] not in ("auto", "system"):
@@ -230,7 +204,7 @@ def inspect_module_sections(path):
                                             if s["flags"] & 0x200000 and not s["flags"] & 1]}
 
 
-def download(url, path):
+def download(url, path, missing_ok=False):
     cache = WORK / "download-cache"
     cache.mkdir(parents=True, exist_ok=True)
     key = hashlib.sha256(url.encode()).hexdigest()
@@ -247,8 +221,16 @@ def download(url, path):
     else:
         partial = cache / (key + ".partial")
         # Android CI's raw URLs support GET. HEAD can incorrectly return 404.
-        run("curl", "--fail", "--location", "--retry", "4", "--retry-all-errors",
-            "--connect-timeout", "30", "--max-time", "1200", "--output", partial, url)
+        try:
+            run("curl", "--fail", "--location", "--retry", "4",
+                *([] if missing_ok else ["--retry-all-errors"]),
+                "--connect-timeout", "30", "--max-time", "1200", "--output", partial,
+                "--write-out", "%{http_code}", url, capture=True)
+        except subprocess.CalledProcessError as error:
+            if missing_ok and error.returncode == 22 and (error.stdout or "").strip() in ("404", "410"):
+                partial.unlink(missing_ok=True)
+                return False
+            raise
         require(partial.stat().st_size > 0, f"Downloaded an empty file: {url}")
         partial.replace(cached)
         write_json(metadata, {"url": url, "sha256": sha256(cached)})
@@ -265,6 +247,7 @@ def download(url, path):
         record["encoding"] = "base64"
     entries.append(record)
     write_json(records, entries)
+    return True
 
 
 def extract(archive, directory):
@@ -366,8 +349,7 @@ def prepare_compiler(c, options):
         revision = re.search(r"based on (r[0-9]+[a-z0-9]*)", options.get("CONFIG_CC_VERSION_TEXT", ""))
         android = re.search(r"android\d+", c["kernel_release"])
         require(revision and android, "Cannot infer the Android Clang archive. Set kernel_clang_url explicitly, or use system for LLVM 19.")
-        clang_url = ("https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/"
-                     f"+archive/refs/heads/{android[0]}-release/clang-{revision[1]}.tar.gz")
+        clang_url = artifacts.clang_archive(android[0], revision[1])
     if clang_url != "system":
         download(clang_url, WORK / "kernel-clang.tar.gz")
         extract(WORK / "kernel-clang.tar.gz", WORK / "kernel-clang")
@@ -392,8 +374,13 @@ def prepare_from_image(c, prepared):
     require(b"Linux version " + c["kernel_release"].encode() + b" " in raw_image.read_bytes(),
             "The kernel image release does not match kernel_release; supply an Image or LZ4 image.")
     original = run("bash", source / "scripts/extract-ikconfig", raw_image, env=env, capture=True)
-    require(hashlib.sha256(original.encode()).hexdigest() == c["kernel_config_sha256"],
-            "The image's embedded configuration does not match the target configuration SHA256.")
+    config_hash = hashlib.sha256(original.encode()).hexdigest()
+    if c["kernel_config_sha256"]:
+        require(config_hash == c["kernel_config_sha256"],
+                "The image's embedded configuration does not match the target configuration SHA256.")
+    else:
+        require(c.get("artifact_source") == "android-prebuilts", "An explicit image requires a configuration SHA256.")
+        c["kernel_config_sha256"] = config_hash
     (prepared / "original.config").write_text(original)
     options = config_options(original)
     clang_url, clang_bin = prepare_compiler(c, options)
@@ -428,6 +415,38 @@ def prepare_from_image(c, prepared):
     }
 
 
+def prepare_kernel(c, kernel_commit, prepared):
+    automatic = c.get("artifact_source") == "android-ci"
+    can_archive = (automatic and c["kernel_repository"].rstrip("/") == DEFAULTS["kernel_repository"]
+                   and c["android_ci_target"] == DEFAULTS["android_ci_target"])
+    if not c["kernel_image_url"]:
+        available = download(c["prepare_url"], WORK / "kernel-prepared.tar.gz", missing_ok=can_archive)
+        if available:
+            available = download(c["symvers_url"], WORK / "Module.symvers", missing_ok=can_archive)
+        if available:
+            extract(WORK / "kernel-prepared.tar.gz", prepared)
+            # A prepared archive can contain a stale symbol table. Use the separate original.
+            shutil.copy2(WORK / "Module.symvers", prepared / "Module.symvers")
+        else:
+            print("Android CI artifacts unavailable; locating the exact official archive.", flush=True)
+            archived = artifacts.kernel_archive(c["kernel_release"], kernel_commit, c["android_ci_build"])
+            archived["system_map_url"] = c["system_map_url"] or archived["system_map_url"]
+            c.update(archived)
+    if c["kernel_image_url"]:
+        download(c["symvers_url"], prepared / "Module.symvers")
+        clang_url, clang_bin, preparation = prepare_from_image(c, prepared)
+    options = inspect_kernel(prepared, c["kernel_release"])
+    if not c["kernel_image_url"]:
+        clang_url, clang_bin = prepare_compiler(c, options)
+        preparation = {"method": "prepared-artifact"}
+        exports = {line.split()[1] for line in (prepared / "Module.symvers").read_text().splitlines() if line.strip()}
+        if can_archive and c["kernel_release"].startswith("5.10.") and "register_kprobe" not in exports and not c["system_map_url"]:
+            archived = artifacts.kernel_archive(c["kernel_release"], kernel_commit, c["android_ci_build"])
+            c["system_map_url"] = archived["system_map_url"]
+            c["artifact_commit"] = archived["artifact_commit"]
+    return options, clang_url, clang_bin, preparation
+
+
 def prepare():
     c = read_json(WORK / "configuration.json")
     source = frida_source(c)
@@ -438,22 +457,11 @@ def prepare():
     ref = c["kernel_ref"]
     if urllib.parse.urlsplit(repository).hostname == "android.googlesource.com":
         url = f"{repository}/+/{urllib.parse.quote(ref, safe='/')}?format=JSON"
-        with urllib.request.urlopen(url, timeout=60) as response:
-            ref = json.loads(response.read().decode()[4:])["commit"]
+        ref = artifacts.gitiles(url)["commit"]
     kernel_commit = git_checkout(repository, ref, WORK / "kernel-source")
     inspect_source(WORK / "kernel-source", c["kernel_release"], kernel_commit)
-
-    if c["kernel_image_url"]:
-        download(c["symvers_url"], prepared / "Module.symvers")
-        clang_url, clang_bin, preparation = prepare_from_image(c, prepared)
-    else:
-        download(c["prepare_url"], WORK / "kernel-prepared.tar.gz")
-        extract(WORK / "kernel-prepared.tar.gz", prepared)
-        download(c["symvers_url"], prepared / "Module.symvers")
-    options = inspect_kernel(prepared, c["kernel_release"])
-    if not c["kernel_image_url"]:
-        clang_url, clang_bin = prepare_compiler(c, options)
-        preparation = {"method": "prepared-artifact"}
+    options, clang_url, clang_bin, preparation = prepare_kernel(c, kernel_commit, prepared)
+    write_json(WORK / "configuration.json", c)
     write_json(WORK / "kernel-options.json", options)
     bootstrap = None
     if c["system_map_url"]:

@@ -38,7 +38,7 @@ Source maintenance on fork `main` does not silently upgrade published server or 
 The tools script uses a fresh temporary checkout and writes `tools-build.json` with source and dependency hashes.
 The server excludes 32-bit and emulated compatibility payloads. Its protocol version remains 17.26.2.
 
-Build modules through the single existing Actions workflow. The default build includes GKI 5.10 compatibility and process injection; presets only supply target kernel artifacts.
+Build modules through the single existing Actions workflow. The default build includes GKI 5.10 compatibility and process injection. The workflow resolves target artifacts automatically.
 Publish the server, tools wheel, both modules, their build records, the source lock, and checksums in this repository's release.
 Update the source-lock hashes before publishing. Download the assets again and check their hashes before accepting a release.
 Module packaging checks the compressed server and extracted binary hashes before replacing its output file.

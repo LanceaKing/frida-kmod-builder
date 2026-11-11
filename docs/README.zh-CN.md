@@ -19,6 +19,10 @@ adb shell uname -r
 将完整输出填入 `kernel_release`。`kernel_family` 可保持 `auto`，也可手动选择对应分支。
 标准 GKI 版本中的 `-g提交号-ab构建号` 用于定位源码和 Android CI 产物。
 `kernel_ref` 和 `android_ci_build` 可以覆盖自动识别结果。
+所有目标使用同一自动流程，不依赖机型预设。自动地址返回 HTTP 404 或 410 时，构建器会搜索官方归档。
+自动归档发现适用于官方 `kernel/common` 源码和 `kernel_aarch64` CI 目标。
+归档的构建号和源码提交必须匹配，镜像也必须包含完整的目标版本。解析后的 URL 和归档提交写入 `configuration.json`。
+手动填写的产物 URL 保持原来源，不会被自动替换。
 仓库默认值来自 Frida 官方示例，不代表你的设备版本。
 
 只有 `5.10`、`6.1` 或 Android 版本号不够。模块还依赖完整构建版本、内核配置和符号 CRC。
@@ -32,22 +36,20 @@ adb shell uname -r
 准备包根目录需要包含 `.config`、`Makefile`、生成的头文件和 x86-64 Linux 构建工具。
 只提供内核源码或配置文件不能代替这两个构建产物。
 
-`kernel_clang_url=auto` 从 `.config` 读取 Android Clang 修订号，并从对应 Android 发布分支下载。
-若原编译器不在该分支，填入正确的编译器 tar 包 URL。解压后根目录应包含 `bin/clang`。
+`kernel_clang_url=auto` 从 `.config` 读取 Android Clang 修订号，在对应 Android 代际的官方分支中搜索，并用不可变提交固定下载地址。
+若官方归档没有该修订版，填入原编译器的 tar 包 URL。解压后根目录应包含 `bin/clang`。
 `system` 使用 LLVM 19，仅适用于兼容该编译器的目标。
 Frida agent 部分独立使用 LLVM 19，以满足 soft-float 构建要求。
 
 ## 已过期的 Android CI 构建
 
-如果准备包已过期，可提供原始 `Image` 或 `Image.lz4` 的 `kernel_image_url`、同次构建的 `symvers_url`，以及设备解压后配置的 `kernel_config_sha256`，并留空 `prepare_url`。
-构建器会核对镜像版本、配置哈希和源码提交，再运行 `olddefconfig` 与 `modules_prepare` 恢复生成文件。
+自动流程会按构建号和源码提交查找官方归档。若官方归档没有所需材料，可提供原始 `Image` 或 `Image.lz4` 的 `kernel_image_url`、同次构建的 `symvers_url`，以及设备解压后配置的 `kernel_config_sha256`，并留空 `prepare_url`。
+自动找到的官方镜像会记录其内嵌配置的 SHA256，这不代表它与厂商设备配置一致。
+手动提供镜像时，还必须核对设备配置哈希。构建器核对镜像完整版本和源码提交后，再运行 `olddefconfig` 与 `modules_prepare` 恢复生成文件。
 只允许迁移 `CONFIG_UNUSED_KSYMS_WHITELIST` 的文件路径；其他配置变化会使构建失败。
 
-[Pixel 7a Android 13 参数](../presets/pixel-7a-android13-5.10.json)对应构建号 `10208116`。
-该版本的官方镜像配置与实测设备配置一致。
 统一的默认构建同时包含 PID 0 内核会话和进程注入。GKI 5.10 兼容由目标头文件自动选择，不再提供独立 5.10 版本或 kernel-only 模式。
-该预设只指定目标内核构建材料，不选择 Frida 功能。
-该预设还提供同次构建的 `system_map_url`。构建器从原始 `System.map` 计算符号查询函数相对 `_text` 的偏移，模块通过已导出的 `kimage_vaddr` 获取运行时基址。
+GKI 5.10 缺少所需导出符号时，自动流程还会定位同次构建的 `System.map`；自定义构建可填写 `system_map_url`。构建器从原始 `System.map` 计算符号查询函数相对 `_text` 的偏移，模块通过已导出的 `kimage_vaddr` 获取运行时基址。
 这解决了 GKI 未导出 kprobe 等函数的问题，不需要手工填写运行时地址，也不会伪造符号 CRC。
 调用未导出函数的局部适配函数使用 `__nocfi`，因为旧版 CFI 可能未为这些目标生成跳转表项；内核的 CFI、LTO 和 MODVERSIONS 配置保持启用。
 
@@ -62,7 +64,7 @@ Frida agent 部分独立使用 LLVM 19，以满足 soft-float 构建要求。
 失败时可下载 diagnostics 查看日志。
 这是公开仓库，只填写可公开的下载地址。
 构建会检查 ELF 架构、版本字符串及配置是否变化，但不会在手机上加载模块。
-构建固定使用官方仓库的 [fork 提交](FORKS.md)，不再临时应用本地补丁。`frida-sources.json` 记录源码提交和 server 校验值；两个 Pixel 5.10 preset 默认包含修复后的 fork server。
+构建固定使用官方仓库的 [fork 提交](FORKS.md)，不再临时应用本地补丁。`frida-sources.json` 记录源码提交和 server 校验值；默认构建包含修复后的 fork server。
 安装流程见 [INSTALL.md](INSTALL.md)。
 
 ## 构建缓存

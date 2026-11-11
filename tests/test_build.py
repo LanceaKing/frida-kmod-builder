@@ -1,9 +1,14 @@
 import importlib.util
+from contextlib import ExitStack
 from pathlib import Path
 import tempfile
 import struct
+import subprocess
+import sys
 import unittest
 from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
 
 SPEC = importlib.util.spec_from_file_location("builder", Path(__file__).parents[1] / "scripts/build.py")
 builder = importlib.util.module_from_spec(SPEC)
@@ -112,34 +117,14 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(result["kernel_family"], "android14-6.1")
         self.assertIn("14219743/kernel_aarch64/latest/raw/", result["prepare_url"])
 
-    def test_release_only_uses_exact_artifact_preset(self):
-        preset = builder.read_json(builder.ROOT / "presets/pixel-7a-android13-5.10.json")
-        # Actions supplies optional inputs as empty strings and compiler=auto.
-        values = dict(builder.DEFAULTS, kernel_release=preset["kernel_release"])
-        result = builder.configuration(values)
-        for key in ("kernel_ref", "kernel_image_url", "symvers_url", "system_map_url", "kernel_config_sha256", "kernel_clang_url"):
-            self.assertEqual(result[key], preset[key])
-        self.assertEqual(result["prepare_url"], "")
-        self.assertEqual(result["artifact_preset"], "pixel-7a-android13-5.10.json")
-        result = builder.configuration(dict(values, kernel_ref=preset["kernel_ref"][:12], kernel_clang_url="system"))
-        self.assertEqual(result["kernel_clang_url"], "system")
-        self.assertEqual(result["kernel_ref"], preset["kernel_ref"][:12])
-
-    def test_artifact_preset_does_not_override_explicit_sources(self):
-        preset = builder.read_json(builder.ROOT / "presets/pixel-7a-android13-5.10.json")
-        for overrides in (
-            {"kernel_repository": "https://example.com/kernel"},
-            {"kernel_ref": "custom-branch"},
-            {"android_ci_build": "12345"},
-            {"android_ci_target": "custom_target"},
-            {"prepare_url": "https://example.com/prepared.tar.gz", "symvers_url": "https://example.com/Module.symvers"},
-        ):
-            with self.subTest(overrides=overrides):
-                result = builder.configuration(dict(kernel_release=preset["kernel_release"], **overrides))
-                self.assertNotIn("artifact_preset", result)
+    def test_all_releases_use_the_same_automatic_inputs(self):
+        for release in ("5.10.157-android13-4-00003-g776d0a76f6aa-ab10208116", builder.DEFAULT_RELEASE):
+            with self.subTest(release=release):
+                result = builder.configuration(dict(builder.DEFAULTS, kernel_release=release))
+                self.assertEqual(result["artifact_source"], "android-ci")
                 self.assertEqual(result["kernel_image_url"], "")
-        with self.assertRaisesRegex(ValueError, "both"):
-            builder.configuration({"kernel_release": preset["kernel_release"], "symvers_url": "https://example.com/Module.symvers"})
+                self.assertEqual(result["kernel_clang_url"], "auto")
+                self.assertIn(result["android_ci_build"] + "/kernel_aarch64/latest/raw/", result["prepare_url"])
 
     def test_custom_kernel_requires_both_artifacts(self):
         with self.assertRaisesRegex(ValueError, "both"):
@@ -155,8 +140,7 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(result["kernel_ref"], "vendor-tag")
 
     def test_kernel_targets_share_the_default_source(self):
-        preset = builder.read_json(builder.ROOT / "presets/pixel-7a-android13-5.10.json")
-        source = builder.frida_source(builder.configuration(preset))
+        source = builder.frida_source(builder.configuration({"kernel_release": "5.10.240-android13-4-gabcdef0-ab12345"}))
         self.assertEqual(source, builder.frida_source(builder.configuration({})))
         self.assertNotIn("profile", source)
 
@@ -295,7 +279,7 @@ class SymbolBootstrapTests(unittest.TestCase):
 class DownloadCacheTests(unittest.TestCase):
     def test_reuses_verified_bytes_and_refetches_corrupt_cache(self):
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(builder, "WORK", Path(directory)):
-            def fake_download(*args):
+            def fake_download(*args, **kwargs):
                 Path(args[args.index("--output") + 1]).write_bytes(b"original artifact")
             destination = Path(directory) / "artifact"
             with mock.patch.object(builder, "run", side_effect=fake_download) as fetch:
@@ -314,7 +298,7 @@ class DownloadCacheTests(unittest.TestCase):
 
     def test_distinguishes_urls_with_the_same_output_name(self):
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(builder, "WORK", Path(directory)):
-            def fake_download(*args):
+            def fake_download(*args, **kwargs):
                 Path(args[args.index("--output") + 1]).write_bytes(args[-1].encode())
             destination = Path(directory) / "artifact"
             with mock.patch.object(builder, "run", side_effect=fake_download) as fetch:
@@ -323,6 +307,116 @@ class DownloadCacheTests(unittest.TestCase):
                     builder.download(url, destination)
                     self.assertEqual(destination.read_text(), url)
                 self.assertEqual(fetch.call_count, 2)
+
+
+class AutomaticPreparationTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.context = ExitStack()
+        self.addCleanup(self.context.close)
+        self.root = Path(self.tmp.name)
+        self.prepared = self.root / "prepared"
+        self.prepared.mkdir()
+        self.c = builder.configuration({})
+        self.symbols = "0x12345678\tmodule_layout\tvmlinux\tEXPORT_SYMBOL\n"
+        self.context.enter_context(mock.patch.object(builder, "WORK", self.root))
+        self.compiler = self.context.enter_context(mock.patch.object(builder, "prepare_compiler", return_value=("compiler-url", self.root)))
+        self.fetch = self.context.enter_context(mock.patch.object(builder, "download", side_effect=self.download))
+        self.context.enter_context(mock.patch.object(builder, "extract", side_effect=self.extract))
+        self.archive = self.context.enter_context(mock.patch.object(builder.artifacts, "kernel_archive", return_value={
+            "prepare_url": "", "kernel_image_url": "https://example.com/Image", "symvers_url": "https://example.com/symvers",
+            "system_map_url": "", "artifact_source": "android-prebuilts", "artifact_commit": "a" * 40}))
+
+    def download(self, url, destination, **kwargs):
+        destination.write_text(self.symbols if "symvers" in url else "archive")
+        return True
+
+    def extract(self, archive, destination):
+        (destination / "include/generated").mkdir(parents=True, exist_ok=True)
+        (destination / "include/generated/utsrelease.h").write_text(f'#define UTS_RELEASE "{self.c["kernel_release"]}"\n')
+        (destination / ".config").write_text("CONFIG_ARM64=y\nCONFIG_MODULES=y\nCONFIG_KPROBES=y\nCONFIG_KALLSYMS_ALL=y\n")
+        (destination / "Module.symvers").write_text("stale archive symbols")
+
+    def test_available_ci_artifacts_preserve_the_original_symbol_table(self):
+        result = builder.prepare_kernel(self.c, "a" * 40, self.prepared)
+        self.assertEqual(result[3], {"method": "prepared-artifact"})
+        self.assertEqual((self.prepared / "Module.symvers").read_text(), self.symbols)
+        self.archive.assert_not_called()
+
+    def test_expired_ci_artifacts_use_the_exact_archive(self):
+        for missing in ("modules_prepare_outdir.tar.gz", "kernel_aarch64_Module.symvers"):
+            with self.subTest(missing=missing):
+                self.c = builder.configuration({})
+                def fetch(url, destination, **kwargs):
+                    return False if url.endswith(missing) else self.download(url, destination, **kwargs)
+                def image(c, prepared):
+                    self.extract(None, prepared)
+                    (prepared / "Module.symvers").write_text(self.symbols)
+                    return "compiler-url", self.root, {"method": "exact-source-and-image"}
+                with mock.patch.object(builder, "download", side_effect=fetch),                      mock.patch.object(builder, "prepare_from_image", side_effect=image):
+                    result = builder.prepare_kernel(self.c, "a" * 40, self.prepared)
+                self.assertEqual(result[3]["method"], "exact-source-and-image")
+                self.assertEqual(self.c["artifact_source"], "android-prebuilts")
+                self.archive.assert_called_with(self.c["kernel_release"], "a" * 40, self.c["android_ci_build"])
+
+    def test_explicit_sources_and_custom_ci_targets_do_not_use_official_fallback(self):
+        for overrides in ({"prepare_url": "https://example.com/prepared", "symvers_url": "https://example.com/symvers"},
+                          {"kernel_repository": "https://example.com/kernel"}, {"android_ci_target": "vendor"}):
+            with self.subTest(overrides=overrides):
+                c = builder.configuration(overrides)
+                self.fetch.side_effect = subprocess.CalledProcessError(22, "curl", output="404")
+                with self.assertRaises(subprocess.CalledProcessError):
+                    builder.prepare_kernel(c, "a" * 40, self.prepared)
+                self.assertFalse(self.fetch.call_args.kwargs["missing_ok"])
+                self.archive.assert_not_called()
+
+    def test_prepared_gki_510_with_trimmed_exports_discovers_its_symbol_map(self):
+        self.c = builder.configuration({"kernel_release": "5.10.240-android13-4-gabcdef0-ab12345"})
+        self.archive.return_value["system_map_url"] = "https://example.com/System.map"
+        builder.prepare_kernel(self.c, "a" * 40, self.prepared)
+        self.assertEqual(self.c["system_map_url"], "https://example.com/System.map")
+        self.assertEqual(self.c["kernel_image_url"], "")
+
+
+class ImageConfigurationTests(unittest.TestCase):
+    def test_checks_banner_and_configuration_before_building(self):
+        original = "CONFIG_ARM64=y\n"
+        for wrong_banner, expected_hash, automatic, succeeds in (
+            (False, "", True, True), (True, "", True, False),
+            (False, "a" * 64, True, False), (False, "", False, False),
+        ):
+            with self.subTest(banner=wrong_banner, expected=expected_hash, automatic=automatic), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                c = dict(builder.DEFAULTS, kernel_image_url="https://example.com/Image", kernel_config_sha256=expected_hash)
+                if automatic:
+                    c["artifact_source"] = "android-prebuilts"
+                def fetch(url, path):
+                    path.write_bytes(b"Linux version " + ("wrong" if wrong_banner else c["kernel_release"]).encode() + b" banner")
+                with mock.patch.object(builder, "WORK", root), mock.patch.object(builder, "download", side_effect=fetch),                      mock.patch.object(builder, "run", return_value=original),                      mock.patch.object(builder, "prepare_compiler", return_value=("compiler", root)) as compiler:
+                    if succeeds:
+                        result = builder.prepare_from_image(c, root)
+                        self.assertEqual(result[2]["original_config_sha256"], builder.hashlib.sha256(original.encode()).hexdigest())
+                    else:
+                        with self.assertRaises(ValueError):
+                            builder.prepare_from_image(c, root)
+                        compiler.assert_not_called()
+
+
+class MissingDownloadTests(unittest.TestCase):
+    def test_only_404_and_410_enable_fallback(self):
+        for status, exit_code, optional in ((404, 22, True), (410, 22, True), (403, 22, True),
+                                            (503, 22, True), (404, 28, True), (404, 22, False)):
+            with self.subTest(status=status, exit=exit_code, optional=optional), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                error = subprocess.CalledProcessError(exit_code, "curl", output=str(status))
+                with mock.patch.object(builder, "WORK", root), mock.patch.object(builder, "run", side_effect=error):
+                    if optional and exit_code == 22 and status in (404, 410):
+                        self.assertFalse(builder.download("https://example.com/artifact", root / "artifact", missing_ok=True))
+                    else:
+                        with self.assertRaises(subprocess.CalledProcessError):
+                            builder.download("https://example.com/artifact", root / "artifact", missing_ok=optional)
+                self.assertFalse((root / "downloads.json").exists())
 
 
 class SourceTests(unittest.TestCase):

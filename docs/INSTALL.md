@@ -15,7 +15,7 @@ A completed Actions build does not prove that this module works on your device.
 Run these commands on the computer connected to the device.
 Replace `frida-agent.ko` if you selected a different module name.
 If the artifact does not include `frida-server`, obtain the pinned [builder release](FORKS.md) and verify both server hashes in `frida-sources.json`.
-The Pixel presets include this server by default.
+The workflow includes this server by default.
 
 ```sh
 shasum -a 256 -c SHA256SUMS
@@ -80,7 +80,7 @@ For upstream details, read the [Frida Linux module guide](https://github.com/fri
 
 ## Full mode: Android App connection
 
-The Pixel 7a full preset is experimental. Check [its acceptance record](PIXEL-5.10-FULL.md) first.
+Runtime testing remains limited to the pinned Pixel 7a target. Check [its acceptance record](PIXEL-5.10-FULL.md) first.
 Revision `0bae5f8` passes a minimal kernel session and normal reload on the pinned device.
 The unchanged Frida 17.26.2 server crashes during App attach because its synthetic Bionic TLS area is too small.
 The [rebuilt Android server](SERVER-ANDROID13-TLS.md) corrects that capacity error.
